@@ -43,4 +43,7 @@ urlpatterns = [
     path('api/cloud-db/save/', views.api_cloud_db_save, name='api_cloud_db_save'),
     path('api/cloud-db/export/', views.api_cloud_db_export, name='api_cloud_db_export'),
     path('api/cloud-db/import/', views.api_cloud_db_import, name='api_cloud_db_import'),
+
+    # REST API - Síntese Vocal Neural (Edge-TTS)
+    path('api/voice/tts/', views.api_voice_tts, name='api_voice_tts'),
 ]

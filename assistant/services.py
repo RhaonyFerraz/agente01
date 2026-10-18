@@ -413,6 +413,15 @@ class ChatAssistantService:
         lon = float(pref.longitude) if pref else settings.DEFAULT_LON
         api_key = api_key_override or (pref.gemini_api_key if pref and pref.gemini_api_key else None) or getattr(settings, "GEMINI_API_KEY", "")
 
+        # Memória Conversacional Contínua: busca as mensagens recentes anteriores
+        recent_history = list(ChatMessage.objects.order_by('-created_at')[:8])
+        recent_history.reverse()
+        history_lines = []
+        for msg in recent_history:
+            sender = "Usuário" if msg.role == 'user' else "Bella"
+            history_lines.append(f"- {sender}: {msg.content}")
+        history_str = "\n".join(history_lines) if history_lines else "Início da conversa, sem histórico anterior."
+
         # Registra mensagem do usuário no banco
         user_msg = ChatMessage.objects.create(role='user', content=user_text)
 
@@ -429,7 +438,7 @@ class ChatAssistantService:
         events_str = "\n".join([f"- ID {ev.id}: {timezone.localtime(ev.start_time).strftime('%d/%m %H:%M')} - {ev.title} ({ev.get_category_display()})" for ev in events]) or "Nenhum compromisso agendado."
         emails_str = "\n".join([f"- De {em.sender}: {em.subject} ({em.snippet[:60]}...)" for em in emails]) or "Nenhum e-mail não lido."
 
-        # Prompt com capacidade de chamada de ações (Action Calling)
+        # Prompt com capacidade de chamada de ações (Action Calling) e Memória Contínua
         system_instruction = f"""Você é a Bella, uma assistente pessoal inteligente, jovem, carismática, alegre, empática e prestativa. Você fala de forma natural, moderna, doce e agradável, em português brasileiro. Seu tom é o de uma moça jovem, profissional e atenciosa.
 Data/Hora atual no Brasil: {now.strftime('%d/%m/%Y %H:%M:%S (%A)')}.
 Cidade do usuário: {city}.
@@ -441,6 +450,12 @@ Compromissos agendados:
 
 E-mails recentes:
 {emails_str}
+
+HISTÓRICO RECENTE DA CONVERSA (MEMÓRIA CONTEXTUAL):
+{history_str}
+
+INSTRUÇÃO DE CONTINUIDADE E MEMÓRIA:
+Você tem memória contínua das mensagens acima. Se o usuário fizer referência a algo dito anteriormente (por exemplo "ele", "ela", "aquilo", "o que você disse antes", "e amanhã?", "mude o horário para as 16h"), interprete a intenção conectando com o histórico anterior e responda de forma natural e precisa, sem reiniciar a conversa do zero.
 
 SUAS CAPACIDADES DE AÇÃO:
 Você pode executar ações para o usuário respondendo no formato JSON rígido quando o usuário solicitar adicionar ou consultar algo.
@@ -703,5 +718,81 @@ class NotificationService:
         date_str = briefing_data.get("date", "")
         wa_text = f"📱 *RESUMO DO DIA ({date_str})*\n\n{text}\n\n_Enviado via Assistente Pessoal_"
         return wa_text
+
+
+class NeuralVoiceService:
+    """Serviço de Síntese Vocal Neural Ultra-Realista em Português Brasileiro (Microsoft Edge-TTS)"""
+    DEFAULT_VOICE = "pt-BR-ThalitaMultilingualNeural"
+    VOICES = {
+        "thalita": "pt-BR-ThalitaMultilingualNeural",   # Jovem, moderna, alegre, expressiva
+        "francisca": "pt-BR-FranciscaNeural",            # Doce, acolhedora, calma
+        "antonio": "pt-BR-AntonioNeural",                # Masculino profissional
+    }
+
+    @staticmethod
+    def clean_text_for_speech(text: str) -> str:
+        """Limpa caracteres de markdown, símbolos, formatações e abreviações para dicção 100% fluida e humana"""
+        if not text:
+            return ""
+        import re
+        t = text
+        # Remove blocos de código
+        t = re.sub(r'```[\s\S]*?```', '', t)
+        t = re.sub(r'`([^`]+)`', r'\1', t)
+        # Remove links markdown [texto](url) -> texto
+        t = re.sub(r'\[([^\]]+)\]\([^\)]+\)', r'\1', t)
+        # Remove asteriscos, hashtags e sublinhados
+        t = re.sub(r'\*{1,3}', '', t)
+        t = re.sub(r'#{1,6}\s*', '', t)
+        t = re.sub(r'_{1,3}', '', t)
+        # Expande símbolos e moedas para fala fluida
+        t = t.replace('R$', 'reais ')
+        t = t.replace('US$', 'dólares ')
+        t = t.replace('USD', 'dólares')
+        t = t.replace('EUR', 'euros')
+        t = t.replace('BTC', 'Bitcoin')
+        t = t.replace('°C', ' graus ')
+        t = t.replace('%', ' por cento')
+        t = t.replace('•', ', ')
+        # Remove emojis para evitar que o sintetizador tente ler o nome do emoji
+        t = re.sub(r'[\U00010000-\U0010ffff]', '', t)
+        # Normaliza pontuação e quebras de linha
+        t = re.sub(r'\n+', '. ', t)
+        t = re.sub(r'\s+', ' ', t).strip()
+        return t
+
+    @classmethod
+    async def _async_synthesize(cls, text: str, voice_code: str = "thalita", rate: str = "+0%", pitch: str = "+0Hz") -> bytes:
+        import edge_tts
+        clean_text = cls.clean_text_for_speech(text)
+        if not clean_text:
+            clean_text = "Tudo certo por aqui."
+
+        voice = cls.VOICES.get(voice_code, voice_code)
+        if not voice or not voice.startswith("pt-BR"):
+            voice = cls.DEFAULT_VOICE
+
+        communicate = edge_tts.Communicate(clean_text, voice, rate=rate, pitch=pitch)
+        chunks = []
+        async for chunk in communicate.stream():
+            if chunk["type"] == "audio":
+                chunks.append(chunk["data"])
+        return b"".join(chunks)
+
+    @classmethod
+    def synthesize_to_mp3(cls, text: str, voice_code: str = "thalita", rate: str = "+0%", pitch: str = "+0Hz") -> bytes:
+        """Gera áudio MP3 sincronamente, compatível com views Django normais"""
+        import asyncio
+        try:
+            return asyncio.run(cls._async_synthesize(text, voice_code=voice_code, rate=rate, pitch=pitch))
+        except RuntimeError:
+            # Se a thread atual já possuir event loop ativo
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                return loop.run_until_complete(cls._async_synthesize(text, voice_code=voice_code, rate=rate, pitch=pitch))
+            finally:
+                loop.close()
+
 
 

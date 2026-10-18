@@ -3,9 +3,11 @@ from django.shortcuts import render
 from django.http import JsonResponse, HttpResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.utils import timezone
-from django.conf import settings
 from .models import Theme, UserPreference, CalendarEvent, EmailHighlight, DailyBriefing, ChatMessage
-from .services import BriefingOrchestrator, WeatherService, CurrencyService, GeminiService, ChatAssistantService, NotificationService
+from .services import (
+    BriefingOrchestrator, WeatherService, CurrencyService, 
+    GeminiService, ChatAssistantService, NotificationService, NeuralVoiceService
+)
 
 def index_view(request):
     """Renderiza a aplicação PWA principal"""
@@ -662,6 +664,41 @@ def api_cloud_db_import(request):
         except Exception as e:
             return JsonResponse({"success": False, "error": str(e)}, status=400)
     return JsonResponse({"error": "Método não permitido"}, status=405)
+
+
+@csrf_exempt
+def api_voice_tts(request):
+    """GET ou POST /api/voice/tts/ - Gera áudio MP3 neural em tempo real com Edge-TTS"""
+    try:
+        if request.method == "POST":
+            body = parse_json_body(request)
+            text = body.get("text", "").strip()
+            voice = body.get("voice", "thalita")
+            rate = body.get("rate", "+0%")
+            pitch = body.get("pitch", "+0Hz")
+        else:
+            text = request.GET.get("text", "").strip()
+            voice = request.GET.get("voice", "thalita")
+            rate = request.GET.get("rate", "+0%")
+            pitch = request.GET.get("pitch", "+0Hz")
+
+        if not text:
+            return JsonResponse({"error": "Texto não fornecido para síntese vocal."}, status=400)
+
+        # Limite máximo de segurança para uma única chamada de áudio
+        if len(text) > 4000:
+            text = text[:4000]
+
+        audio_bytes = NeuralVoiceService.synthesize_to_mp3(text, voice_code=voice, rate=rate, pitch=pitch)
+        
+        response = HttpResponse(audio_bytes, content_type="audio/mpeg")
+        response["Content-Disposition"] = 'inline; filename="bella_speech.mp3"'
+        response["Cache-Control"] = "public, max-age=3600"
+        return response
+    except Exception as e:
+        print(f"Erro ao gerar síntese vocal neural: {e}")
+        return JsonResponse({"error": str(e)}, status=500)
+
 
 
 

@@ -20,7 +20,7 @@
   <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
 
   <!-- Estilos Principais -->
-  <link rel="stylesheet" href="/static/css/styles.css?v=7">
+  <link rel="stylesheet" href="/static/css/styles.css?v=9">
   
   <style id="dynamic-theme-vars">
     :root {
@@ -53,11 +53,16 @@
         </div>
       </div>
       <div class="header-actions">
+        <button id="btn-wakeword-toggle" class="btn-wakeword-badge active" title="Ativação por voz: diga 'Ei Bella'" onclick="app.toggleWakeWord()">
+          <span class="wakeword-icon">🌸</span>
+          <span class="wakeword-text">"Ei Bella"</span>
+          <span id="wakeword-indicator-dot" class="wakeword-dot pulse"></span>
+        </button>
         <button id="btn-voice-live-trigger" class="btn-live-voice pulse-glow" title="Conversar com a Bella (Voz Contínua)" aria-label="Modo Áudio Contínuo" onclick="app.startContinuousVoiceMode()">
           <span class="live-mic-pulse">🎙️</span>
           <span class="live-voice-text">Falar com Bella</span>
         </button>
-        <button id="btn-voice-read" class="icon-btn" title="Ouvir Resumo com Voz (TTS)" aria-label="Ouvir Resumo">
+        <button id="btn-voice-read" class="icon-btn" title="Ouvir Resumo com Voz Neural (TTS)" aria-label="Ouvir Resumo">
           <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
             <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path>
@@ -482,28 +487,47 @@
           </div>
         </div>
 
-        <!-- Configuração da Voz da Bella (Voz Feminina Jovem) -->
+        <!-- Configuração da Voz da Bella (Voz Feminina Neural & Wake Word) -->
         <div class="card glass-card settings-card" id="card-bella-voice">
           <div class="card-header">
-            <h3>🎙️ Voz da Bella (Moça Jovem)</h3>
-            <span class="badge badge-accent">Voz Feminina</span>
+            <h3>🎙️ Voz da Bella & Ativação</h3>
+            <span class="badge badge-accent">Voz Neural HD</span>
           </div>
           <p class="card-explainer">
-            A Bella conversa com voz natural e jovial. Escolha a voz feminina preferida do seu dispositivo e ajuste o tom ou velocidade da fala.
+            A Bella agora conta com <strong>Voz Neural de Alta Fidelidade</strong> (Microsoft Edge-TTS). Selecione a personalidade, velocidade ou ative a escuta por voz ("Ei Bella").
           </p>
           <div class="settings-form">
+            <!-- Seletor de Motor -->
             <div class="form-group">
-              <label for="bella-voice-select">Voz Selecionada para a Bella:</label>
-              <select id="bella-voice-select" class="input-text" onchange="app.onVoiceSelectChange(this.value)">
-                <option value="">Detectando melhor voz feminina...</option>
+              <label for="bella-voice-engine">Mecanismo de Síntese:</label>
+              <select id="bella-voice-engine" class="input-text" onchange="app.onVoiceEngineChange(this.value)">
+                <option value="neural">🌟 Voz Neural de Alta Fidelidade (Microsoft AI Studio - Recomendado)</option>
+                <option value="browser">🎙️ Voz Nativa do Dispositivo (SpeechSynthesis Offline)</option>
               </select>
-              <small class="help-text">Recomendadas: <strong>Microsoft Francisca (Natural)</strong>, <strong>Google português do Brasil</strong> ou <strong>Luciana</strong>.</small>
+            </div>
+
+            <!-- Opções da Voz Neural -->
+            <div class="form-group" id="bella-neural-voice-wrap">
+              <label for="bella-neural-voice-select">Personalidade da Bella:</label>
+              <select id="bella-neural-voice-select" class="input-text" onchange="app.onNeuralVoiceChange(this.value)">
+                <option value="thalita">🌸 Thalita (Jovem, Moderna, Alegre e Espontânea)</option>
+                <option value="francisca">✨ Francisca (Doce, Suave, Acolhedora)</option>
+                <option value="antonio">🎙️ Antonio (Voz Masculina Profissional)</option>
+              </select>
+            </div>
+
+            <!-- Opções da Voz Nativa (Browser) -->
+            <div class="form-group" id="bella-native-voice-wrap" style="display:none;">
+              <label for="bella-voice-select">Voz do Sistema Operacional:</label>
+              <select id="bella-voice-select" class="input-text" onchange="app.onVoiceSelectChange(this.value)">
+                <option value="">Detectando vozes do sistema...</option>
+              </select>
             </div>
 
             <div class="voice-sliders-grid" style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:8px;">
               <div class="form-group">
-                <label for="bella-voice-pitch">Tom Jovial: <strong id="val-voice-pitch">1.18x</strong></label>
-                <input type="range" id="bella-voice-pitch" min="0.8" max="1.5" step="0.05" value="1.18" oninput="app.onPitchChange(this.value)" class="range-slider" style="width:100%;">
+                <label for="bella-voice-pitch">Entonação: <strong id="val-voice-pitch">1.18x</strong></label>
+                <input type="range" id="bella-voice-pitch" min="0.8" max="1.4" step="0.05" value="1.18" oninput="app.onPitchChange(this.value)" class="range-slider" style="width:100%;">
               </div>
               <div class="form-group">
                 <label for="bella-voice-rate">Velocidade: <strong id="val-voice-rate">1.06x</strong></label>
@@ -511,7 +535,18 @@
               </div>
             </div>
 
-            <div class="modal-actions" style="margin-top:12px; display:flex; gap:10px;">
+            <!-- Wake Word Switch -->
+            <div class="form-group" style="margin-top:12px; padding:12px; background:rgba(255,255,255,0.04); border-radius:12px; border:1px solid rgba(255,255,255,0.08);">
+              <label style="display:flex; align-items:center; gap:10px; cursor:pointer; font-weight:600;">
+                <input type="checkbox" id="cfg-wakeword-enabled" onchange="app.onWakeWordCheckboxChange(this.checked)" style="width:18px; height:18px; accent-color:var(--primary); cursor:pointer;">
+                <span>Ativação por Voz Contínua ("Ei Bella!")</span>
+              </label>
+              <small class="help-text" style="display:block; margin-top:4px; opacity:0.8;">
+                Quando ativado, basta falar "Ei Bella" perto do microfone para abrir o assistente automaticamente.
+              </small>
+            </div>
+
+            <div class="modal-actions" style="margin-top:14px; display:flex; gap:10px;">
               <button type="button" class="btn-primary" onclick="app.testBellaVoice()" style="flex:1;">
                 <span>🌸 Ouvir Teste da Bella</span>
               </button>
@@ -803,6 +838,6 @@
   <div id="toast-notification" class="toast hidden"></div>
 
   <!-- Scripts -->
-  <script src="/static/js/app.js?v=7"></script>
+  <script src="/static/js/app.js?v=9"></script>
 </body>
 </html>

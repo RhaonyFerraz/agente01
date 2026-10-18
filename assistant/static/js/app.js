@@ -23,6 +23,18 @@ class PersonalAssistantApp {
     this.bellaRate = parseFloat(localStorage.getItem('bella_voice_rate') || '1.06');
     this.selectedVoiceName = localStorage.getItem('bella_voice_name') || '';
     
+    // Configurações de Voz Neural e Web Audio API
+    this.voiceEngine = localStorage.getItem('bella_voice_engine') || 'neural';
+    this.selectedNeuralVoice = localStorage.getItem('bella_neural_voice') || 'thalita';
+    this.currentAudioPlayer = null;
+    this.audioContext = null;
+    this.analyser = null;
+    this.micStream = null;
+    this.micSource = null;
+    this.visualizerRaf = null;
+    this.wakeWordActive = localStorage.getItem('bella_wakeword_enabled') !== 'false';
+    this.wakeWordRecognition = null;
+    
     try {
       this.init();
     } catch (e) {
@@ -40,6 +52,7 @@ class PersonalAssistantApp {
     this.setupTasksQuickAdd();
     this.setupAutoRefresh();
     this.setupBellaVoice();
+    this.setupWakeWord();
     this.loadTodayBriefing();
     this.loadThemes();
     this.loadSettings();
@@ -427,16 +440,11 @@ class PersonalAssistantApp {
   }
 
   /* =========================================================================
-     SÍNTESE DE VOZ (TEXT-TO-SPEECH)
+     SÍNTESE DE VOZ (TEXT-TO-SPEECH NEURAL & NATIVO)
   ========================================================================= */
   toggleSpeech() {
-    if (!('speechSynthesis' in window)) {
-      this.showToast('Síntese de voz não suportada pelo seu navegador.');
-      return;
-    }
-
     if (this.isSpeaking) {
-      window.speechSynthesis.cancel();
+      this.stopAllAudio();
       this.isSpeaking = false;
       this.updateVoiceIcon(false);
       this.showToast('Áudio pausado.');
@@ -449,34 +457,32 @@ class PersonalAssistantApp {
       return;
     }
 
-    // Remove asteriscos e caracteres de markdown para pronúncia natural
-    const cleanText = summaryText
-      .replace(/\*\*/g, '')
-      .replace(/\*/g, '')
-      .replace(/#/g, '')
-      .replace(/•/g, '')
-      .replace(/\n+/g, '. ');
+    this.isSpeaking = true;
+    this.updateVoiceIcon(true);
+    this.showToast('🌸 Bella reproduzindo seu resumo...');
 
-    this.speechUtterance = new SpeechSynthesisUtterance(cleanText);
-    this.configureBellaUtterance(this.speechUtterance);
-
-    this.speechUtterance.onstart = () => {
-      this.isSpeaking = true;
-      this.updateVoiceIcon(true);
-      this.showToast('Reproduzindo resumo por voz...');
-    };
-
-    this.speechUtterance.onend = () => {
+    this.playBellaSpeech(summaryText, {
+      onStart: () => {
+        this.isSpeaking = true;
+        this.updateVoiceIcon(true);
+      }
+    }, () => {
       this.isSpeaking = false;
       this.updateVoiceIcon(false);
-    };
+    });
+  }
 
-    this.speechUtterance.onerror = () => {
-      this.isSpeaking = false;
-      this.updateVoiceIcon(false);
-    };
-
-    window.speechSynthesis.speak(this.speechUtterance);
+  stopAllAudio() {
+    if (this.currentAudioPlayer) {
+      try {
+        this.currentAudioPlayer.pause();
+        this.currentAudioPlayer = null;
+      } catch(e) {}
+    }
+    if (window.speechSynthesis) {
+      window.speechSynthesis.cancel();
+    }
+    this.stopVisualizerLoop();
   }
 
   updateVoiceIcon(isPlaying) {
@@ -1209,19 +1215,7 @@ class PersonalAssistantApp {
   }
 
   speakText(text) {
-    if (!('speechSynthesis' in window)) return;
-    window.speechSynthesis.cancel();
-
-    const clean = text
-      .replace(/\*\*/g, '')
-      .replace(/\*/g, '')
-      .replace(/#/g, '')
-      .replace(/•/g, '')
-      .replace(/\n+/g, '. ');
-
-    const utterance = new SpeechSynthesisUtterance(clean);
-    this.configureBellaUtterance(utterance);
-    window.speechSynthesis.speak(utterance);
+    this.playBellaSpeech(text);
   }
 
   /* =========================================================================
@@ -1327,6 +1321,20 @@ class PersonalAssistantApp {
     try {
       this.setLiveVoiceStatus('listening');
       this.continuousRecognition.start();
+
+      // Conecta o microfone ao analisador Web Audio API para o orbe pulsar dinamicamente
+      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia && !this.micStream) {
+        navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
+          this.micStream = stream;
+          if (this.continuousVoiceActive && !this.isAssistantSpeakingLive && !this.continuousVoicePaused) {
+            this.startMicrophoneVisualizer(this.micStream);
+          }
+        }).catch(err => {
+          console.warn('Microfone para Web Audio API não concedido:', err);
+        });
+      } else if (this.micStream) {
+        this.startMicrophoneVisualizer(this.micStream);
+      }
     } catch (e) {
       // Ignora erro se já estiver ativo
     }
@@ -1338,6 +1346,7 @@ class PersonalAssistantApp {
         this.continuousRecognition.stop();
       } catch (e) {}
     }
+    this.stopVisualizerLoop();
   }
 
   async handleLiveVoiceUtterance(text) {
@@ -1383,15 +1392,16 @@ class PersonalAssistantApp {
           }
         }
 
-        // Fala a resposta do assistente e retoma escuta ao término
+        // Fala a resposta do assistente (Neural) e retoma escuta ao término
         this.speakLiveUtterance(reply, () => {
           if (this.continuousVoiceActive && !this.continuousVoicePaused) {
             this.startLiveListening();
           }
         });
       } else {
-        if (aiTextEl) aiTextEl.textContent = 'Desculpe, tive uma instabilidade. Pode repetir?';
-        this.speakLiveUtterance('Desculpe, tive uma instabilidade. Pode repetir?', () => {
+        const fallbackTxt = 'Desculpe, tive uma instabilidade momentânea. Pode repetir?';
+        if (aiTextEl) aiTextEl.textContent = fallbackTxt;
+        this.speakLiveUtterance(fallbackTxt, () => {
           if (this.continuousVoiceActive && !this.continuousVoicePaused) {
             this.startLiveListening();
           }
@@ -1409,37 +1419,19 @@ class PersonalAssistantApp {
   }
 
   speakLiveUtterance(text, onComplete) {
-    if (!('speechSynthesis' in window)) {
-      if (onComplete) onComplete();
-      return;
-    }
-
-    window.speechSynthesis.cancel();
     this.isAssistantSpeakingLive = true;
     this.setLiveVoiceStatus('speaking');
 
-    const clean = text
-      .replace(/\*\*/g, '')
-      .replace(/\*/g, '')
-      .replace(/#/g, '')
-      .replace(/•/g, '')
-      .replace(/\n+/g, '. ');
-
-    const utterance = new SpeechSynthesisUtterance(clean);
-    this.configureBellaUtterance(utterance);
-
-    utterance.onend = () => {
+    this.playBellaSpeech(text, {
+      isLive: true,
+      onStart: () => {
+        this.isAssistantSpeakingLive = true;
+        this.setLiveVoiceStatus('speaking');
+      }
+    }, () => {
       this.isAssistantSpeakingLive = false;
       if (onComplete) onComplete();
-    };
-
-    utterance.onerror = (e) => {
-      console.warn('Erro ao falar voz ao vivo:', e);
-      this.isAssistantSpeakingLive = false;
-      if (onComplete) onComplete();
-    };
-
-    window.speechSynthesis.speak(utterance);
+    });
   }
 
   setLiveVoiceStatus(state) {
@@ -1457,7 +1449,7 @@ class PersonalAssistantApp {
       } else if (state === 'thinking') {
         pill.textContent = '🟡 Processando com IA...';
       } else if (state === 'speaking') {
-        pill.textContent = '🟣 Assistente falando...';
+        pill.textContent = '🟣 Bella falando com você...';
       } else if (state === 'paused') {
         pill.textContent = '⏸️ Conversa Pausada';
       }
@@ -1774,27 +1766,407 @@ class PersonalAssistantApp {
   }
 
   /* =========================================================================
-     VOZ DA BELLA (SÍNTESE DE VOZ FEMININA JOVEM & PERSONALIZÁVEL)
+     VOZ DA BELLA (SÍNTESE NEURAL EDGE-TTS, NATIVA E WEB AUDIO API)
   ========================================================================= */
   setupBellaVoice() {
-    if (!('speechSynthesis' in window)) return;
-
-    // Atualiza sliders com valores salvos
+    // Atualiza controles com valores salvos
     const pitchSlider = document.getElementById('bella-voice-pitch');
     const rateSlider = document.getElementById('bella-voice-rate');
     const pitchVal = document.getElementById('val-voice-pitch');
     const rateVal = document.getElementById('val-voice-rate');
+    const engineSelect = document.getElementById('bella-voice-engine');
+    const neuralSelect = document.getElementById('bella-neural-voice-select');
+    const wakeCheckbox = document.getElementById('cfg-wakeword-enabled');
 
     if (pitchSlider) pitchSlider.value = this.bellaPitch;
     if (rateSlider) rateSlider.value = this.bellaRate;
     if (pitchVal) pitchVal.textContent = `${this.bellaPitch.toFixed(2)}x`;
     if (rateVal) rateVal.textContent = `${this.bellaRate.toFixed(2)}x`;
 
-    // Carrega vozes imediatamente ou via evento
-    this.populateBellaVoiceSelect();
-    window.speechSynthesis.onvoiceschanged = () => {
+    if (engineSelect) {
+      engineSelect.value = this.voiceEngine;
+      this.toggleVoiceEngineUI(this.voiceEngine);
+    }
+
+    if (neuralSelect) {
+      neuralSelect.value = this.selectedNeuralVoice;
+    }
+
+    if (wakeCheckbox) {
+      wakeCheckbox.checked = this.wakeWordActive;
+    }
+
+    // Carrega vozes do browser (se o usuário optar por motor offline)
+    if ('speechSynthesis' in window) {
       this.populateBellaVoiceSelect();
+      window.speechSynthesis.onvoiceschanged = () => {
+        this.populateBellaVoiceSelect();
+      };
+    }
+  }
+
+  toggleVoiceEngineUI(engine) {
+    const neuralWrap = document.getElementById('bella-neural-voice-wrap');
+    const nativeWrap = document.getElementById('bella-native-voice-wrap');
+    if (neuralWrap) neuralWrap.style.display = engine === 'neural' ? 'block' : 'none';
+    if (nativeWrap) nativeWrap.style.display = engine === 'browser' ? 'block' : 'none';
+  }
+
+  onVoiceEngineChange(engine) {
+    this.voiceEngine = engine;
+    localStorage.setItem('bella_voice_engine', engine);
+    this.toggleVoiceEngineUI(engine);
+    this.showToast(engine === 'neural' ? '🌟 Voz Neural da Bella ativada!' : '🎙️ Voz do sistema ativada.');
+    this.testBellaVoice();
+  }
+
+  onNeuralVoiceChange(voice) {
+    this.selectedNeuralVoice = voice;
+    localStorage.setItem('bella_neural_voice', voice);
+    this.showToast(`Personalidade da Bella: ${voice === 'thalita' ? 'Thalita 🌸' : 'Francisca ✨'}`);
+    this.testBellaVoice();
+  }
+
+  onWakeWordCheckboxChange(checked) {
+    this.wakeWordActive = checked;
+    localStorage.setItem('bella_wakeword_enabled', checked ? 'true' : 'false');
+    this.updateWakeWordUI(checked);
+    if (checked) {
+      this.showToast('🎙️ Escuta "Ei Bella" ativada!');
+      this.setupWakeWord();
+    } else {
+      if (this.wakeWordRecognition) {
+        try { this.wakeWordRecognition.stop(); } catch(e) {}
+      }
+      this.showToast('Escuta "Ei Bella" desativada.');
+    }
+  }
+
+  /* =========================================================================
+     WAKE WORD DETECTION ("Ei Bella" / "Olá Bella")
+  ========================================================================= */
+  setupWakeWord() {
+    const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRec) {
+      this.updateWakeWordUI(false);
+      return;
+    }
+
+    if (this.wakeWordRecognition) {
+      try { this.wakeWordRecognition.stop(); } catch(e) {}
+    }
+
+    if (!this.wakeWordActive) {
+      this.updateWakeWordUI(false);
+      return;
+    }
+
+    this.wakeWordRecognition = new SpeechRec();
+    this.wakeWordRecognition.continuous = true;
+    this.wakeWordRecognition.interimResults = true;
+    this.wakeWordRecognition.lang = 'pt-BR';
+
+    this.wakeWordRecognition.onresult = (event) => {
+      // Se a Bella já estiver falando ou modal aberto, não aciona novamente
+      if (this.continuousVoiceActive || this.isAssistantSpeakingLive || this.isSpeaking) return;
+
+      const results = event.results;
+      for (let i = event.resultIndex; i < results.length; i++) {
+        const transcript = results[i][0].transcript.toLowerCase().trim();
+        if (
+          transcript.includes('ei bella') ||
+          transcript.includes('olá bella') ||
+          transcript.includes('ola bella') ||
+          transcript.includes('oi bella') ||
+          transcript.endsWith('bella')
+        ) {
+          console.log('🌸 Wake Word DETECTADA! Acionando modo de voz da Bella.');
+          this.showToast('🌸 "Ei Bella" detectado! Estou aqui.');
+          this.triggerWakeWordActivation();
+          break;
+        }
+      }
     };
+
+    this.wakeWordRecognition.onerror = (e) => {
+      if (e.error === 'not-allowed') {
+        this.wakeWordActive = false;
+        localStorage.setItem('bella_wakeword_enabled', 'false');
+        this.updateWakeWordUI(false);
+      }
+    };
+
+    this.wakeWordRecognition.onend = () => {
+      if (this.wakeWordActive && !this.continuousVoiceActive && !this.isListening) {
+        setTimeout(() => {
+          try {
+            if (this.wakeWordActive && !this.continuousVoiceActive) {
+              this.wakeWordRecognition.start();
+            }
+          } catch(e) {}
+        }, 900);
+      }
+    };
+
+    try {
+      this.wakeWordRecognition.start();
+      this.updateWakeWordUI(true);
+    } catch(e) {
+      console.warn('Erro ao inicializar Wake Word:', e);
+    }
+  }
+
+  toggleWakeWord() {
+    this.onWakeWordCheckboxChange(!this.wakeWordActive);
+  }
+
+  updateWakeWordUI(isActive) {
+    const btn = document.getElementById('btn-wakeword-toggle');
+    const dot = document.getElementById('wakeword-indicator-dot');
+    const chk = document.getElementById('cfg-wakeword-enabled');
+
+    if (btn) btn.className = `btn-wakeword-badge ${isActive ? 'active' : ''}`;
+    if (dot) dot.className = `wakeword-dot ${isActive ? 'pulse' : ''}`;
+    if (chk) chk.checked = isActive;
+  }
+
+  triggerWakeWordActivation() {
+    if (this.wakeWordRecognition) {
+      try { this.wakeWordRecognition.stop(); } catch(e) {}
+    }
+    this.startContinuousVoiceMode();
+  }
+
+  /* =========================================================================
+     WEB AUDIO API - ORBE REATIVO AO VOLUME REAL & SOUND WAVES
+  ========================================================================= */
+  initAudioContext() {
+    if (!this.audioContext) {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (AudioCtx) {
+        this.audioContext = new AudioCtx();
+      }
+    }
+    if (this.audioContext && this.audioContext.state === 'suspended') {
+      this.audioContext.resume();
+    }
+    if (this.audioContext && !this.analyser) {
+      this.analyser = this.audioContext.createAnalyser();
+      this.analyser.fftSize = 64;
+      this.analyser.smoothingTimeConstant = 0.75;
+    }
+    return this.analyser;
+  }
+
+  startMicrophoneVisualizer(stream) {
+    try {
+      this.initAudioContext();
+      if (!this.audioContext || !this.analyser) return;
+
+      if (this.micSource) {
+        try { this.micSource.disconnect(); } catch(e) {}
+      }
+      this.micSource = this.audioContext.createMediaStreamSource(stream);
+      this.micSource.connect(this.analyser);
+      this.runVisualizerLoop('mic');
+    } catch(e) {
+      console.warn('Erro ao conectar microfone ao visualizador:', e);
+    }
+  }
+
+  connectAudioElementToVisualizer(audioEl) {
+    try {
+      this.initAudioContext();
+      if (!this.audioContext || !this.analyser) return;
+
+      if (!audioEl._sourceConnected) {
+        const source = this.audioContext.createMediaElementSource(audioEl);
+        source.connect(this.analyser);
+        this.analyser.connect(this.audioContext.destination);
+        audioEl._sourceConnected = true;
+      }
+      this.runVisualizerLoop('speaker');
+    } catch(e) {
+      console.warn('Erro ao conectar elemento de áudio ao visualizador:', e);
+    }
+  }
+
+  runVisualizerLoop(sourceType) {
+    if (this.visualizerRaf) {
+      cancelAnimationFrame(this.visualizerRaf);
+    }
+
+    const orb = document.getElementById('voice-main-orb');
+    const barsContainer = document.getElementById('voice-soundbars');
+    const bars = barsContainer ? barsContainer.querySelectorAll('.bar') : [];
+    const bufferLength = this.analyser.frequencyBinCount;
+    const dataArray = new Uint8Array(bufferLength);
+
+    const update = () => {
+      if (!this.analyser) return;
+      this.analyser.getByteFrequencyData(dataArray);
+
+      let sum = 0;
+      for (let i = 0; i < bufferLength; i++) {
+        sum += dataArray[i];
+      }
+      const avg = sum / bufferLength;
+      const normalizedVol = Math.min(avg / 110, 1.0);
+
+      // Efeito de pulso no Orbe Principal
+      if (orb) {
+        const scale = 1 + normalizedVol * 0.42;
+        orb.style.transform = `scale(${scale})`;
+        if (normalizedVol > 0.06) {
+          const glow = sourceType === 'mic'
+            ? `0 0 ${20 + normalizedVol * 50}px rgba(52, 211, 153, 0.75)`
+            : `0 0 ${24 + normalizedVol * 60}px rgba(244, 63, 138, 0.85), 0 0 ${40 + normalizedVol * 70}px rgba(168, 85, 247, 0.6)`;
+          orb.style.boxShadow = glow;
+        } else {
+          orb.style.boxShadow = '';
+        }
+      }
+
+      // Efeito nas barras de frequência
+      if (bars && bars.length > 0) {
+        bars.forEach((bar, idx) => {
+          const val = dataArray[idx % bufferLength] || 0;
+          const h = Math.max(5, Math.min(val / 2.8, 54));
+          bar.style.height = `${h}px`;
+          bar.style.opacity = `${0.3 + (h / 54) * 0.7}`;
+        });
+      }
+
+      this.visualizerRaf = requestAnimationFrame(update);
+    };
+
+    this.visualizerRaf = requestAnimationFrame(update);
+  }
+
+  stopVisualizerLoop() {
+    if (this.visualizerRaf) {
+      cancelAnimationFrame(this.visualizerRaf);
+      this.visualizerRaf = null;
+    }
+    const orb = document.getElementById('voice-main-orb');
+    if (orb) {
+      orb.style.transform = '';
+      orb.style.boxShadow = '';
+    }
+    const barsContainer = document.getElementById('voice-soundbars');
+    const bars = barsContainer ? barsContainer.querySelectorAll('.bar') : [];
+    bars.forEach(b => {
+      b.style.height = '';
+      b.style.opacity = '';
+    });
+  }
+
+  /* =========================================================================
+     EXECUÇÃO DE FALA (NEURAL EDGE-TTS & FALLBACK NATIVO)
+  ========================================================================= */
+  async playBellaSpeech(text, options = {}, onComplete) {
+    if (typeof options === 'function') {
+      onComplete = options;
+      options = {};
+    }
+
+    this.stopAllAudio();
+
+    const clean = text
+      .replace(/\*\*/g, '')
+      .replace(/\*/g, '')
+      .replace(/#/g, '')
+      .replace(/•/g, '')
+      .replace(/\n+/g, '. ');
+
+    // 1. Tenta reproduzir via voz Neural (Edge-TTS)
+    if (this.voiceEngine === 'neural') {
+      try {
+        const voiceCode = this.selectedNeuralVoice || 'thalita';
+        const res = await fetch('/api/voice/tts/', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            text: clean,
+            voice: voiceCode,
+            rate: this.getEdgeRateString(),
+            pitch: this.getEdgePitchString()
+          })
+        });
+
+        if (res.ok && res.headers.get('content-type')?.includes('audio')) {
+          const blob = await res.blob();
+          const audioUrl = URL.createObjectURL(blob);
+          const audio = new Audio(audioUrl);
+          this.currentAudioPlayer = audio;
+
+          audio.onplay = () => {
+            this.connectAudioElementToVisualizer(audio);
+            if (options.onStart) options.onStart();
+          };
+
+          audio.onended = () => {
+            this.stopVisualizerLoop();
+            URL.revokeObjectURL(audioUrl);
+            this.currentAudioPlayer = null;
+            if (onComplete) onComplete();
+          };
+
+          audio.onerror = (err) => {
+            console.warn('Erro na reprodução neural, usando fallback nativo:', err);
+            this.stopVisualizerLoop();
+            URL.revokeObjectURL(audioUrl);
+            this.currentAudioPlayer = null;
+            this.fallbackBrowserSpeech(clean, options, onComplete);
+          };
+
+          await audio.play();
+          return;
+        }
+      } catch (err) {
+        console.warn('Falha na chamada Edge-TTS neural, alternando para síntese nativa:', err);
+      }
+    }
+
+    // 2. Fallback nativo
+    this.fallbackBrowserSpeech(clean, options, onComplete);
+  }
+
+  fallbackBrowserSpeech(cleanText, options = {}, onComplete) {
+    if (!('speechSynthesis' in window)) {
+      if (onComplete) onComplete();
+      return;
+    }
+
+    const utterance = new SpeechSynthesisUtterance(cleanText);
+    this.configureBellaUtterance(utterance);
+
+    utterance.onstart = () => {
+      if (options.onStart) options.onStart();
+    };
+
+    utterance.onend = () => {
+      this.stopVisualizerLoop();
+      if (onComplete) onComplete();
+    };
+
+    utterance.onerror = (e) => {
+      console.warn('Erro síntese nativa:', e);
+      this.stopVisualizerLoop();
+      if (onComplete) onComplete();
+    };
+
+    window.speechSynthesis.speak(utterance);
+  }
+
+  getEdgeRateString() {
+    const diff = Math.round((this.bellaRate - 1.0) * 100);
+    return `${diff >= 0 ? '+' : ''}${diff}%`;
+  }
+
+  getEdgePitchString() {
+    const diff = Math.round((this.bellaPitch - 1.0) * 20);
+    return `${diff >= 0 ? '+' : ''}${diff}Hz`;
   }
 
   getBellaVoice() {
@@ -1802,14 +2174,11 @@ class PersonalAssistantApp {
     const voices = window.speechSynthesis.getVoices();
     if (!voices || voices.length === 0) return null;
 
-    // 1. Se o usuário escolheu uma voz específica
     if (this.selectedVoiceName) {
       const chosen = voices.find(v => v.name === this.selectedVoiceName);
       if (chosen) return chosen;
     }
 
-    // 2. Prioridade para vozes femininas naturais em pt-BR de alta qualidade
-    // Microsoft Francisca Online (Natural) e Google português do Brasil são super jovens e naturais
     const priorityFemaleNames = [
       'francisca', 'leticia', 'letícia', 'luciana', 'vitória', 'vitoria', 
       'heloisa', 'heloísa', 'maria', 'camila', 'fernanda', 'joana', 
@@ -1824,14 +2193,12 @@ class PersonalAssistantApp {
       if (match) return match;
     }
 
-    // 3. Qualquer voz pt-BR feminina ou com tag feminina
     const anyFemalePt = voices.find(v => 
       (v.lang === 'pt-BR' || v.lang.startsWith('pt')) && 
       (v.name.toLowerCase().includes('female') || v.name.toLowerCase().includes('mulher'))
     );
     if (anyFemalePt) return anyFemalePt;
 
-    // 4. Qualquer voz pt-BR
     const ptVoice = voices.find(v => v.lang === 'pt-BR' || v.lang.startsWith('pt'));
     return ptVoice || null;
   }
@@ -1842,7 +2209,6 @@ class PersonalAssistantApp {
     if (bellaVoice) {
       utterance.voice = bellaVoice;
     }
-    // Tom jovial doce e velocidade moderna
     utterance.pitch = this.bellaPitch || 1.18;
     utterance.rate = this.bellaRate || 1.06;
   }
@@ -1859,7 +2225,6 @@ class PersonalAssistantApp {
 
     select.innerHTML = '';
     
-    // Lista vozes em português primeiro
     if (ptVoices.length > 0) {
       ptVoices.forEach(v => {
         const opt = document.createElement('option');
@@ -1872,7 +2237,6 @@ class PersonalAssistantApp {
         select.appendChild(opt);
       });
     } else {
-      // Se não houver voz pt explícita no momento
       voices.slice(0, 10).forEach(v => {
         const opt = document.createElement('option');
         opt.value = v.name;
@@ -1885,7 +2249,7 @@ class PersonalAssistantApp {
   onVoiceSelectChange(voiceName) {
     this.selectedVoiceName = voiceName;
     localStorage.setItem('bella_voice_name', voiceName);
-    this.showToast('Voz da Bella atualizada!');
+    this.showToast('Voz do sistema atualizada!');
     this.testBellaVoice();
   }
 
@@ -1904,21 +2268,9 @@ class PersonalAssistantApp {
   }
 
   testBellaVoice() {
-    if (!('speechSynthesis' in window)) {
-      this.showToast('Síntese de voz não suportada pelo seu navegador.');
-      return;
-    }
-    window.speechSynthesis.cancel();
-
     const sampleText = "Oi, Rhaony! Eu sou a Bella, sua assistente pessoal! Minha voz já está configurada como você pediu. Como posso te ajudar hoje?";
-    const utterance = new SpeechSynthesisUtterance(sampleText);
-    this.configureBellaUtterance(utterance);
-
-    utterance.onstart = () => {
-      this.showToast('🌸 Bella falando...');
-    };
-
-    window.speechSynthesis.speak(utterance);
+    this.showToast('🌸 Bella falando teste de voz...');
+    this.playBellaSpeech(sampleText);
   }
 
   escapeHtml(text) {
