@@ -1,0 +1,771 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="{{ theme.primary_color|default:'#6366f1' }}">
+  <meta name="description" content="Assistente Pessoal inteligente com briefing diário, clima em Itobi/SP, cotação do dólar e agenda com IA Gemini.">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>Assistente Pessoal | Resumo Diário</title>
+
+  <!-- Google Fonts: Inter & Outfit -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@500;600;700&display=swap" rel="stylesheet">
+
+  <!-- PWA Manifest -->
+  <link rel="manifest" href="/manifest.json">
+  <link rel="icon" type="image/svg+xml" href="/static/icons/icon.svg">
+  <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
+
+  <!-- Estilos Principais -->
+  <link rel="stylesheet" href="/static/css/styles.css?v=6">
+  
+  <style id="dynamic-theme-vars">
+    :root {
+      --primary: {{ theme.primary_color|default:'#6366f1' }};
+      --secondary: {{ theme.secondary_color|default:'#8b5cf6' }};
+      --accent: {{ theme.accent_color|default:'#10b981' }};
+      --bg-start: {{ theme.bg_gradient_start|default:'#0f172a' }};
+      --bg-end: {{ theme.bg_gradient_end|default:'#1e1b4b' }};
+      --card-bg: {{ theme.card_bg|default:'rgba(30, 41, 59, 0.75)' }};
+      --card-border: {{ theme.card_border|default:'rgba(255, 255, 255, 0.12)' }};
+      --text: {{ theme.text_color|default:'#f8fafc' }};
+      --text-muted: {{ theme.text_muted|default:'#94a3b8' }};
+      --font-main: {{ theme.font_family|default:"'Inter', sans-serif" }};
+    }
+  </style>
+</head>
+<body>
+  <div class="app-container">
+    
+    <!-- Topbar Mobile -->
+    <header class="app-header">
+      <div class="header-left">
+        <div class="app-badge">
+          <span class="pulse-indicator"></span>
+          <span id="header-status">Online</span>
+        </div>
+        <div class="header-titles">
+          <h1>Assistente Pessoal</h1>
+          <span id="current-date-badge" class="date-badge">Carregando...</span>
+        </div>
+      </div>
+      <div class="header-actions">
+        <button id="btn-voice-live-trigger" class="btn-live-voice pulse-glow" title="Modo Áudio Contínuo (Mãos-Livres)" aria-label="Modo Áudio Contínuo" onclick="app.startContinuousVoiceMode()">
+          <span class="live-mic-pulse">🎙️</span>
+          <span class="live-voice-text">Falar</span>
+        </button>
+        <button id="btn-voice-read" class="icon-btn" title="Ouvir Resumo com Voz (TTS)" aria-label="Ouvir Resumo">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+            <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+          </svg>
+        </button>
+        <button id="btn-refresh-briefing" class="icon-btn" title="Atualizar dados agora" aria-label="Atualizar">
+          <svg class="icon spin-target" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="23 4 23 10 17 10"></polyline>
+            <polyline points="1 20 1 14 7 14"></polyline>
+            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- Banner PWA Install (se suportado) -->
+    <div id="pwa-install-banner" class="install-banner hidden">
+      <div class="install-text">
+        <strong>Instalar Aplicativo</strong>
+        <p>Acesse o resumo diário com um toque direto no seu celular.</p>
+      </div>
+      <button id="btn-install-pwa" class="btn-install">Instalar</button>
+    </div>
+
+    <!-- Main Content Area -->
+    <main class="app-main">
+      
+      <!-- ABA 1: RESUMO DO DIA (BRIEFING) -->
+      <section id="tab-briefing" class="tab-pane active">
+        
+        <!-- Gemini Executive Card -->
+        <div class="card glass-card executive-briefing-card">
+          <div class="card-header">
+            <div class="card-title-group">
+              <span class="ai-sparkle">✨</span>
+              <h2>Resumo Executivo do Dia</h2>
+            </div>
+            <span class="tag tag-ai">Gemini Flash IA</span>
+          </div>
+
+          <div class="card-body">
+            <div id="briefing-loading-skeleton" class="loading-state hidden">
+              <div class="skeleton-line shimmer" style="width: 70%;"></div>
+              <div class="skeleton-line shimmer" style="width: 95%;"></div>
+              <div class="skeleton-line shimmer" style="width: 85%;"></div>
+              <div class="skeleton-line shimmer" style="width: 60%;"></div>
+            </div>
+            <div id="gemini-briefing-content" class="briefing-markdown">
+              Carregando o resumo diário...
+            </div>
+          </div>
+
+          <div class="card-footer">
+            <button id="btn-listen-card" class="btn-subtle">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="mini-icon">
+                <polygon points="5 3 19 12 5 21 5 3"></polygon>
+              </svg>
+              <span>Ouvir</span>
+            </button>
+            <div class="briefing-dispatch-actions">
+              <button id="btn-share-whatsapp" class="btn-dispatch wa" title="Enviar para o WhatsApp" type="button">
+                <span>📲 WhatsApp</span>
+              </button>
+              <button id="btn-send-telegram" class="btn-dispatch tg" title="Enviar para o Telegram via Bot" type="button">
+                <span>✈️ Telegram</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Grid de Clima e Cotação -->
+        <div class="dashboard-grid">
+          
+          <!-- Card de Clima (Itobi - SP) -->
+          <div class="card glass-card weather-card">
+            <div class="card-header">
+              <div class="header-info">
+                <span class="city-badge" id="weather-city-badge">Itobi, SP</span>
+                <span class="card-subtitle">Previsão de Hoje</span>
+              </div>
+              <span id="weather-icon-badge" class="weather-emoji">⛅</span>
+            </div>
+            <div class="weather-main-row">
+              <div class="current-temp-wrap">
+                <span id="weather-current-temp" class="current-temp">--°</span>
+                <span class="temp-unit">C</span>
+              </div>
+              <div class="weather-hl">
+                <div class="hl-item">
+                  <span class="hl-label">Máx</span>
+                  <span id="weather-temp-max" class="hl-val max">--°</span>
+                </div>
+                <div class="hl-item">
+                  <span class="hl-label">Mín</span>
+                  <span id="weather-temp-min" class="hl-val min">--°</span>
+                </div>
+              </div>
+            </div>
+            <p id="weather-condition-desc" class="weather-desc">Carregando previsão...</p>
+            <div class="weather-stats-footer">
+              <div class="stat-pill">
+                <span>🌧️ Chuva:</span>
+                <strong id="weather-rain-prob">--%</strong>
+              </div>
+              <div class="stat-pill">
+                <span>💧 Umidade:</span>
+                <strong id="weather-humidity">--%</strong>
+              </div>
+              <div class="stat-pill">
+                <span>💨 Vento:</span>
+                <strong id="weather-wind">-- km/h</strong>
+              </div>
+            </div>
+          </div>
+
+          <!-- Card Multi-Cotações (USD/EUR/BTC) -->
+          <div class="card glass-card currency-card multi-currency-card">
+            <div class="card-header">
+              <div class="header-info">
+                <span class="currency-tag">Câmbio</span>
+                <span class="card-subtitle">Cotações em tempo real</span>
+              </div>
+              <span class="currency-live-dot">● AO VIVO</span>
+            </div>
+            <!-- Rates List -->
+            <div id="multi-currency-rates" class="multi-rates-list">
+              <div class="rate-row skeleton-line shimmer" style="height:48px;border-radius:10px"></div>
+              <div class="rate-row skeleton-line shimmer" style="height:48px;border-radius:10px;margin-top:8px"></div>
+              <div class="rate-row skeleton-line shimmer" style="height:48px;border-radius:10px;margin-top:8px"></div>
+            </div>
+            <!-- Conversor Rápido USD -->
+            <div class="quick-converter">
+              <div class="conv-input-group">
+                <span>$</span>
+                <input type="number" id="quick-usd-input" value="10" min="1" step="1">
+              </div>
+              <span class="conv-arrow">➔</span>
+              <div class="conv-result">
+                <span>R$ <strong id="quick-brl-result">0,00</strong></span>
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- Previsão Semanal (Sparkline 7 dias) -->
+        <div class="card glass-card weekly-forecast-card">
+          <div class="card-header">
+            <h3>📅 Previsão dos Próximos 7 Dias</h3>
+            <span class="tag tag-ai">Open-Meteo</span>
+          </div>
+          <div id="weekly-forecast-chart" class="weekly-chart-wrap">
+            <!-- Gerado via JS -->
+            <p class="empty-state-msg">Carregando previsão semanal...</p>
+          </div>
+        </div>
+
+        <!-- Widget de Produtividade - Tarefas Rápidas -->
+        <div class="card glass-card tasks-widget-card">
+          <div class="card-header">
+            <div class="card-title-group">
+              <span>🎯</span>
+              <h3>Tarefas do Dia</h3>
+            </div>
+            <div class="tasks-progress-wrap">
+              <span id="tasks-progress-label" class="tasks-progress-text">0/0</span>
+              <div class="tasks-progress-bar-bg">
+                <div id="tasks-progress-bar" class="tasks-progress-bar" style="width:0%"></div>
+              </div>
+            </div>
+          </div>
+          <div id="tasks-list" class="tasks-list">
+            <p class="empty-state-msg">Nenhuma tarefa para hoje. Adicione abaixo! ✨</p>
+          </div>
+          <!-- Quick Add Task -->
+          <div class="task-quick-add">
+            <input type="text" id="quick-task-input" placeholder="Nova tarefa rápida... (Enter para adicionar)" class="input-text" autocomplete="off">
+            <select id="quick-task-priority" class="input-text" style="max-width:120px;">
+              <option value="medium">⚡ Média</option>
+              <option value="high">🔴 Alta</option>
+              <option value="low">🔵 Baixa</option>
+            </select>
+            <button id="btn-add-quick-task" class="btn-primary" style="white-space:nowrap">+ Adicionar</button>
+          </div>
+        </div>
+
+        <!-- Seção Rápida de Destaques: Agenda e E-mails -->
+        <div class="quick-previews-grid">
+          
+          <!-- Agenda Rápida -->
+          <div class="card glass-card preview-card">
+            <div class="card-header">
+              <h3>📅 Próximos Compromissos</h3>
+              <button class="link-btn" onclick="app.switchTab('agenda')">Ver todos</button>
+            </div>
+            <div id="quick-agenda-list" class="preview-list">
+              <p class="empty-state-msg">Carregando compromissos...</p>
+            </div>
+          </div>
+
+          <!-- E-mails Rápidos -->
+          <div class="card glass-card preview-card">
+            <div class="card-header">
+              <h3>✉️ E-mails Prioritários</h3>
+              <button class="link-btn" onclick="app.switchTab('emails')">Ver todos</button>
+            </div>
+            <div id="quick-email-list" class="preview-list">
+              <p class="empty-state-msg">Carregando e-mails...</p>
+            </div>
+          </div>
+
+        </div>
+
+      </section>
+
+      <!-- ABA 2: AGENDA DETALHADA -->
+      <section id="tab-agenda" class="tab-pane">
+        <div class="pane-header">
+          <div>
+            <h2>Agenda de Hoje</h2>
+            <p class="pane-subtitle">Compromissos organizados em ordem cronológica</p>
+          </div>
+          <button id="btn-add-event" class="btn-action">+ Novo Evento</button>
+        </div>
+
+        <div id="agenda-full-timeline" class="timeline-container">
+          <!-- Renderizado via JS -->
+        </div>
+      </section>
+
+      <!-- ABA 3: E-MAILS & DESTAQUES -->
+      <section id="tab-emails" class="tab-pane">
+        <div class="pane-header">
+          <div>
+            <h2>Caixa de Entrada Inteligente</h2>
+            <p class="pane-subtitle">Mensagens importantes identificadas para o seu dia</p>
+          </div>
+          <button id="btn-add-email" class="btn-action">+ Novo Destaque</button>
+        </div>
+
+        <div id="emails-full-list" class="emails-container">
+          <!-- Renderizado via JS -->
+        </div>
+      </section>
+
+      <!-- ABA CHAT: CONVERSA POR VOZ E TEXTO COM O GEMINI -->
+      <section id="tab-chat" class="tab-pane">
+        <div class="pane-header">
+          <div>
+            <h2>Chat Interativo IA ✨</h2>
+            <p class="pane-subtitle">Fale por voz ou digite para gerenciar o dia</p>
+          </div>
+          <div class="chat-header-actions">
+            <button id="btn-toggle-voice-reply" class="voice-reply-toggle active" title="Falar respostas do assistente por voz">
+              <span class="voice-dot"></span>
+              <span id="voice-reply-label">Voz Ativa</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Banner Modo Áudio Contínuo (Mãos-Livres) -->
+        <div class="chat-live-voice-banner">
+          <button id="btn-chat-live-voice" class="btn-live-voice-full" onclick="app.startContinuousVoiceMode()" type="button">
+            <div class="banner-orb-glow">🎙️</div>
+            <div class="banner-text-info">
+              <strong>Modo Áudio Contínuo (Mãos-Livres)</strong>
+              <span>Converse naturalmente por voz sem precisar clicar</span>
+            </div>
+            <span class="banner-start-pill">Iniciar ➔</span>
+          </button>
+        </div>
+
+        <!-- Sugestões Rápidas (Chips) -->
+        <div class="chat-chips-scroll">
+          <button class="chip-btn" onclick="app.sendQuickPrompt('O que tenho agendado para hoje?')">📅 O que tenho hoje?</button>
+          <button class="chip-btn" onclick="app.sendQuickPrompt('Vai chover hoje em Itobi?')">⛅ Chance de chuva?</button>
+          <button class="chip-btn" onclick="app.sendQuickPrompt('Como está a cotação do dólar hoje?')">💵 Cotação do Dólar</button>
+          <button class="chip-btn" onclick="app.sendQuickPrompt('Adicione reunião com o cliente às 15h')">➕ Reunião às 15h</button>
+          <button class="chip-btn" onclick="app.sendQuickPrompt('Me dê um conselho de produtividade para o dia')">💡 Dica do dia</button>
+        </div>
+
+        <!-- Área de Conversa -->
+        <div class="card glass-card chat-window-card">
+          <div id="chat-messages-container" class="chat-messages-box">
+            <!-- Mensagens do Chat inseridas aqui via JS -->
+          </div>
+
+          <!-- Indicador de Gravação / Escutando -->
+          <div id="voice-recording-indicator" class="recording-bar hidden">
+            <div class="sound-wave">
+              <span></span><span></span><span></span><span></span><span></span>
+            </div>
+            <span class="recording-text">Ouvindo sua voz... Fale agora!</span>
+          </div>
+
+          <!-- Input Bar com Microfone e Envio -->
+          <div class="chat-input-bar">
+            <button id="btn-mic-input" class="btn-mic" title="Falar por voz (Speech-to-Text)" type="button">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="mic-icon">
+                <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
+                <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+                <line x1="12" y1="19" x2="12" y2="23"></line>
+                <line x1="8" y1="23" x2="16" y2="23"></line>
+              </svg>
+            </button>
+            <input type="text" id="chat-text-input" placeholder="Fale ou digite para o assistente..." autocomplete="off">
+            <button id="btn-chat-send" class="btn-send" title="Enviar mensagem" type="button">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="send-icon">
+                <line x1="22" y1="2" x2="11" y2="13"></line>
+                <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+              </svg>
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ABA 4: TEMAS & CONFIGURAÇÕES (DJANGO & NUVEM) -->
+      <section id="tab-settings" class="tab-pane">
+        <div class="pane-header">
+          <div>
+            <h2>Temas & Nuvem</h2>
+            <p class="pane-subtitle">Personalização visual Django e conexões na nuvem</p>
+          </div>
+        </div>
+
+        <!-- Seletor de Temas do Django -->
+        <div class="card glass-card settings-card">
+          <div class="card-header">
+            <h3>🎨 Temas Visuais (Gerenciados no Django)</h3>
+          </div>
+          <p class="card-explainer">
+            Escolha o tema visual do sistema. As paletas e estilos são sincronizados dinamicamente com o banco de dados do Django.
+          </p>
+          <div id="themes-grid-container" class="themes-grid">
+            <!-- Temas carregados via API /api/themes/ -->
+          </div>
+        </div>
+
+        <!-- Configurações de IA e Nuvem -->
+        <div class="card glass-card settings-card">
+          <div class="card-header">
+            <h3>⚡ Google Gemini AI & Dados na Nuvem</h3>
+          </div>
+          <div class="settings-form">
+            <div class="form-group">
+              <label for="cfg-gemini-key">Chave de API do Gemini (Google AI Studio - Gratuita):</label>
+              <div class="input-with-action">
+                <input type="password" id="cfg-gemini-key" placeholder="AIzaSy..." class="input-text">
+                <button id="btn-save-key" class="btn-primary">Salvar Chave</button>
+              </div>
+              <small class="help-text">
+                Obtenha gratuitamente sua chave no <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener">Google AI Studio</a>. Se não for informada, o assistente usará o gerador estruturado inteligente.
+              </small>
+            </div>
+
+            <div class="form-group">
+              <label for="cfg-city-name">Cidade para Previsão:</label>
+              <div class="input-with-action">
+                <input type="text" id="cfg-city-name" value="Itobi, SP" class="input-text">
+                <button id="btn-save-city" class="btn-subtle">Atualizar</button>
+              </div>
+            </div>
+
+            <!-- Card Nuvem de Dados (Supabase / PostgreSQL) -->
+            <div class="cloud-db-panel">
+              <div class="cloud-panel-header">
+                <div class="cloud-header-left">
+                  <span class="cloud-icon-glow">☁️</span>
+                  <div>
+                    <strong>Sincronização em Nuvem (Supabase / PostgreSQL)</strong>
+                    <span class="cloud-sub">Acesse seus compromissos e tarefas de qualquer aparelho</span>
+                  </div>
+                </div>
+                <span id="cloud-db-provider-badge" class="cloud-badge sqlite">SQLite Local</span>
+              </div>
+
+              <!-- Métricas Rápidas -->
+              <div class="cloud-metrics-row">
+                <div class="cloud-metric-item">
+                  <span class="metric-label">Conexão:</span>
+                  <div class="metric-val">
+                    <span id="cloud-db-status-dot" class="status-dot green"></span>
+                    <strong id="cloud-db-status-text">Conectado</strong>
+                  </div>
+                </div>
+                <div class="cloud-metric-item">
+                  <span class="metric-label">Latência:</span>
+                  <strong id="cloud-db-latency" class="metric-val-highlight">0.8 ms</strong>
+                </div>
+                <div class="cloud-metric-item">
+                  <span class="metric-label">Registros no Banco:</span>
+                  <strong id="cloud-db-records-count" class="metric-val-highlight">13</strong>
+                </div>
+              </div>
+
+              <!-- Input DATABASE_URL do Supabase -->
+              <div class="form-group" style="margin-top: 12px;">
+                <label for="cfg-cloud-db-url">URI de Conexão do Supabase (PostgreSQL):</label>
+                <div class="input-with-action">
+                  <input type="password" id="cfg-cloud-db-url" placeholder="postgresql://postgres:[SENHA]@db.ref.supabase.co:5432/postgres" class="input-text">
+                  <button type="button" id="btn-toggle-db-url-visibility" class="btn-subtle" onclick="app.toggleDbUrlVisibility()" title="Exibir/Ocultar Senha">👁️</button>
+                  <button type="button" id="btn-test-cloud-db" class="btn-subtle" onclick="app.testCloudDbConnection()">Testar ⚡</button>
+                  <button type="button" id="btn-save-cloud-db" class="btn-primary" onclick="app.saveCloudDbUrl()">Conectar ☁️</button>
+                </div>
+                <small class="help-text">
+                  Crie seu banco gratuito em <a href="https://supabase.com" target="_blank" rel="noopener">supabase.com</a>. Copie a URI em <em>Project Settings &gt; Database &gt; URI</em>.
+                </small>
+              </div>
+
+              <!-- Botões de Backup & Restauração -->
+              <div class="cloud-backup-actions">
+                <button type="button" class="btn-backup export" onclick="app.exportCloudBackup()">
+                  <span>📦 Baixar Backup JSON</span>
+                </button>
+                <label class="btn-backup import">
+                  <span>📥 Restaurar Dados JSON</span>
+                  <input type="file" id="input-import-backup" accept=".json" style="display:none" onchange="app.importCloudBackup(event)">
+                </label>
+              </div>
+            </div>
+
+          </div>
+        </div>
+
+        <!-- Configurações de Notificações Telegram & WhatsApp -->
+        <div class="card glass-card settings-card">
+          <div class="card-header">
+            <h3>📲 Integração com Telegram & WhatsApp</h3>
+          </div>
+          <p class="card-explainer">
+            Receba o resumo executivo matinal e alertas diretamente no seu Telegram ou WhatsApp.
+          </p>
+          <div class="settings-form">
+            <div class="form-group">
+              <label for="cfg-tg-token">Token do Bot Telegram (@BotFather):</label>
+              <input type="text" id="cfg-tg-token" placeholder="Ex: 123456789:ABCdefGhIJKlmNoPQRstuVWXyz" class="input-text">
+              <small class="help-text">Crie seu bot gratuito via <a href="https://t.me/BotFather" target="_blank" rel="noopener">@BotFather</a> no Telegram.</small>
+            </div>
+
+            <div class="form-group">
+              <label for="cfg-tg-chat-id">Seu Chat ID do Telegram:</label>
+              <div class="input-with-action">
+                <input type="text" id="cfg-tg-chat-id" placeholder="Ex: 987654321" class="input-text">
+                <button id="btn-test-telegram" class="btn-subtle" type="button">Testar Envio ✈️</button>
+              </div>
+              <small class="help-text">Descubra seu Chat ID conversando com <a href="https://t.me/userinfobot" target="_blank" rel="noopener">@userinfobot</a>.</small>
+            </div>
+
+            <div class="form-group">
+              <label for="cfg-wa-number">Seu Número de WhatsApp com DDD:</label>
+              <input type="tel" id="cfg-wa-number" placeholder="Ex: 5519999999999" class="input-text">
+              <small class="help-text">Usado para abrir diretamente a conversa com você no WhatsApp com 1 toque.</small>
+            </div>
+
+            <div class="form-group checkbox-group">
+              <input type="checkbox" id="cfg-auto-tg">
+              <label for="cfg-auto-tg">Habilitar envio matinal automático no Telegram ✈️</label>
+            </div>
+
+            <button id="btn-save-notifications" class="btn-primary" style="width:100%; margin-top:8px;">Salvar Preferências de Notificação</button>
+          </div>
+        </div>
+
+      </section>
+
+    </main>
+
+    <!-- Bottom Navigation Bar (Mobile Native Style com 5 Abas) -->
+    <nav class="bottom-nav">
+      <button class="nav-item active" data-tab="briefing">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="nav-icon">
+          <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
+          <polyline points="9 22 9 12 15 12 15 22"></polyline>
+        </svg>
+        <span>Resumo</span>
+      </button>
+
+      <button class="nav-item" data-tab="agenda">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="nav-icon">
+          <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+          <line x1="16" y1="2" x2="16" y2="6"></line>
+          <line x1="8" y1="2" x2="8" y2="6"></line>
+          <line x1="3" y1="10" x2="21" y2="10"></line>
+        </svg>
+        <span>Agenda</span>
+      </button>
+
+      <button class="nav-item nav-item-prominent" data-tab="chat">
+        <div class="prominent-glow">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="nav-icon">
+            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+          </svg>
+        </div>
+        <span>Chat IA</span>
+      </button>
+
+      <button class="nav-item" data-tab="emails">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="nav-icon">
+          <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path>
+          <polyline points="22,6 12,13 2,6"></polyline>
+        </svg>
+        <span>E-mails</span>
+      </button>
+
+      <button class="nav-item" data-tab="settings">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="nav-icon">
+          <circle cx="12" cy="12" r="3"></circle>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+        </svg>
+        <span>Temas</span>
+      </button>
+    </nav>
+
+  </div>
+
+  <!-- Modal Adicionar Evento -->
+  <div id="modal-event" class="modal-backdrop hidden">
+    <div class="modal-box glass-card">
+      <div class="modal-header">
+        <h3>Novo Compromisso na Agenda</h3>
+        <button class="modal-close" onclick="app.closeModal('modal-event')">&times;</button>
+      </div>
+      <form id="form-new-event">
+        <div class="form-group">
+          <label for="event-title">Título:</label>
+          <input type="text" id="event-title" required placeholder="Ex: Reunião com diretoria" class="input-text">
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="event-time">Horário:</label>
+            <input type="time" id="event-time" required value="09:00" class="input-text">
+          </div>
+          <div class="form-group">
+            <label for="event-category">Categoria:</label>
+            <select id="event-category" class="input-text">
+              <option value="work">Trabalho / Reunião</option>
+              <option value="personal">Pessoal</option>
+              <option value="health">Saúde / Treino</option>
+              <option value="study">Estudos</option>
+              <option value="other">Outros</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="event-location">Local / Link:</label>
+          <input type="text" id="event-location" placeholder="Ex: Google Meet ou Sala 2" class="input-text">
+        </div>
+        <div class="form-group checkbox-group">
+          <input type="checkbox" id="event-important">
+          <label for="event-important">Marcar como prioridade alta ⚠️</label>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn-subtle" onclick="app.closeModal('modal-event')">Cancelar</button>
+          <button type="submit" class="btn-primary">Salvar na Agenda</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal Adicionar E-mail -->
+  <div id="modal-email" class="modal-backdrop hidden">
+    <div class="modal-box glass-card">
+      <div class="modal-header">
+        <h3>Novo Destaque de E-mail</h3>
+        <button class="modal-close" onclick="app.closeModal('modal-email')">&times;</button>
+      </div>
+      <form id="form-new-email">
+        <div class="form-group">
+          <label for="email-sender">Remetente:</label>
+          <input type="text" id="email-sender" required placeholder="Ex: Diretoria Financeira" class="input-text">
+        </div>
+        <div class="form-group">
+          <label for="email-subject">Assunto:</label>
+          <input type="text" id="email-subject" required placeholder="Ex: Aprovação de orçamento mensal" class="input-text">
+        </div>
+        <div class="form-group">
+          <label for="email-snippet">Resumo / Trecho:</label>
+          <textarea id="email-snippet" rows="3" placeholder="Resumo do que precisa ser visto..." class="input-text"></textarea>
+        </div>
+        <div class="form-group checkbox-group">
+          <input type="checkbox" id="email-important" checked>
+          <label for="email-important">Destacar como urgente 🚨</label>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn-subtle" onclick="app.closeModal('modal-email')">Cancelar</button>
+          <button type="submit" class="btn-primary">Registrar E-mail</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal Adicionar Tarefa -->
+  <div id="modal-task" class="modal-backdrop hidden">
+    <div class="modal-box glass-card">
+      <div class="modal-header">
+        <h3>🎯 Nova Tarefa</h3>
+        <button class="modal-close" onclick="app.closeModal('modal-task')">&#times;</button>
+      </div>
+      <form id="form-new-task">
+        <div class="form-group">
+          <label for="task-title">Título da Tarefa:</label>
+          <input type="text" id="task-title" required placeholder="Ex: Revisar proposta comercial" class="input-text">
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="task-priority">Prioridade:</label>
+            <select id="task-priority" class="input-text">
+              <option value="high">🔴 Alta</option>
+              <option value="medium" selected>⚡ Média</option>
+              <option value="low">🔵 Baixa</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="task-category">Categoria:</label>
+            <select id="task-category" class="input-text">
+              <option value="work">💼 Trabalho</option>
+              <option value="personal">🏠 Pessoal</option>
+              <option value="health">💪 Saúde</option>
+              <option value="study">📚 Estudos</option>
+              <option value="other">📌 Outros</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="task-notes">Notas (opcional):</label>
+          <textarea id="task-notes" rows="2" placeholder="Observações..." class="input-text"></textarea>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn-subtle" onclick="app.closeModal('modal-task')">Cancelar</button>
+          <button type="submit" class="btn-primary">Criar Tarefa</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal Modo Áudio Interativo Contínuo (Hands-Free) -->
+  <div id="modal-voice-live" class="voice-live-modal-backdrop hidden">
+    <div class="voice-live-modal glass-card">
+      <div class="voice-live-header">
+        <div class="voice-live-title">
+          <span class="live-dot pulse"></span>
+          <span>Modo Conversa por Voz</span>
+        </div>
+        <button class="modal-close" onclick="app.stopContinuousVoiceMode()">&times;</button>
+      </div>
+
+      <!-- Animação do Orbe Sonoro / Sound Wave -->
+      <div class="voice-orb-stage">
+        <div class="voice-ring ring-3"></div>
+        <div class="voice-ring ring-2"></div>
+        <div class="voice-ring ring-1"></div>
+        <div id="voice-main-orb" class="voice-main-orb state-listening">
+          <span class="voice-orb-icon">🎙️</span>
+        </div>
+        <!-- Barras de Frequência Sonora -->
+        <div class="voice-soundbars" id="voice-soundbars">
+          <span class="bar bar-1"></span>
+          <span class="bar bar-2"></span>
+          <span class="bar bar-3"></span>
+          <span class="bar bar-4"></span>
+          <span class="bar bar-5"></span>
+          <span class="bar bar-6"></span>
+          <span class="bar bar-7"></span>
+        </div>
+      </div>
+
+      <!-- Status Atual -->
+      <div class="voice-status-wrap">
+        <span id="voice-live-status-pill" class="voice-status-pill state-listening">
+          🟢 Ouvindo você... Fale naturalmente
+        </span>
+      </div>
+
+      <!-- Transcrições ao Vivo (Usuário e Assistente) -->
+      <div class="voice-dialogue-box">
+        <div class="voice-speech-row user-row">
+          <span class="bubble-tag">Você</span>
+          <p id="voice-live-user-text" class="voice-bubble user">"Aguardando você falar..."</p>
+        </div>
+        <div class="voice-speech-row assistant-row">
+          <span class="bubble-tag ai">Assistente</span>
+          <p id="voice-live-ai-text" class="voice-bubble assistant">"Olá! Pode falar qualquer pergunta, agendar compromisso ou pedir uma tarefa."</p>
+        </div>
+      </div>
+
+      <!-- Sugestões de Comandos Rápidos -->
+      <div class="voice-quick-hints">
+        <button type="button" class="hint-badge clickable" onclick="app.handleLiveVoiceUtterance('Adicione a tarefa Comprar café')">"Adicione tarefa comprar café"</button>
+        <button type="button" class="hint-badge clickable" onclick="app.handleLiveVoiceUtterance('Como está a cotação do dólar hoje?')">"Como está o dólar hoje?"</button>
+        <button type="button" class="hint-badge clickable" onclick="app.handleLiveVoiceUtterance('Marque reunião amanhã às 15h com a diretoria')">"Marque reunião amanhã às 15h"</button>
+      </div>
+
+      <!-- Controles de Ação -->
+      <div class="voice-live-controls">
+        <button id="btn-voice-live-toggle" class="btn-voice-ctrl pause" type="button" onclick="app.toggleContinuousVoicePause()">
+          <span>⏸️ Pausar</span>
+        </button>
+        <button class="btn-voice-ctrl stop" type="button" onclick="app.stopContinuousVoiceMode()">
+          <span>⏹️ Encerrar Conversa</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Notificação -->
+  <div id="toast-notification" class="toast hidden"></div>
+
+  <!-- Scripts -->
+  <script src="/static/js/app.js?v=6"></script>
+</body>
+</html>

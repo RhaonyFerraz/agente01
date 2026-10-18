@@ -1,0 +1,16 @@
+# Framework & Web
+Django>=5.0,<7.0
+djangorestframework>=3.14.0
+django-cors-headers>=4.3.0
+
+# IA & Integrações
+google-generativeai>=0.8.0
+requests>=2.31.0
+python-dotenv>=1.0.0
+
+# Banco de Dados & Nuvem (PostgreSQL / Supabase / Neon)
+psycopg2-binary>=2.9.9
+dj-database-url>=2.1.0
+
+# Imagens & PWA Assets
+Pillow>=10.0.0

@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#4f46e5" />
+      <stop offset="50%" stop-color="#6366f1" />
+      <stop offset="100%" stop-color="#06b6d4" />
+    </linearGradient>
+    <linearGradient id="glowGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.3" />
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0.05" />
+    </linearGradient>
+  </defs>
+  
+  <!-- Fundo com cantos arredondados -->
+  <rect width="512" height="512" rx="120" fill="url(#bgGrad)" />
+  <rect x="16" y="16" width="480" height="480" rx="104" fill="none" stroke="url(#glowGrad)" stroke-width="4" />
+  
+  <!-- Ícone do Assistente (Brain / Sparkle / Calendar) -->
+  <g fill="#ffffff" transform="translate(64, 64) scale(0.75)">
+    <!-- Sol / Clima -->
+    <circle cx="360" cy="140" r="45" fill="#facc15" />
+    
+    <!-- Nuvem de Dados estilizada -->
+    <path d="M193.7 152.2C182.4 97.4 134.4 56 76.8 56 34.4 56 0 90.4 0 132.8c0 7.8 1.2 15.3 3.4 22.3C-11 170.8 -16 202.8 -16 236.8c0 62.4 50.4 112.8 112.8 112.8h216c53 0 96-43 96-96 0-48.4-35.8-88.4-82.6-94.8-8.2-3.8-17.4-6.6-27.1-6.6-1.5 0-2.9 0.1-4.4 0.2z" fill="#ffffff" opacity="0.9" transform="translate(60, 60)" />
+
+    <!-- Sparkle Gemini IA -->
+    <path d="M256 120 L270 170 L320 184 L270 198 L256 248 L242 198 L192 184 L242 170 Z" fill="#38bdf8" />
+    <path d="M160 260 L168 290 L198 298 L168 306 L160 336 L152 306 L122 298 L152 290 Z" fill="#a855f7" />
+
+    <!-- Marcador de Dólar / Agenda -->
+    <circle cx="256" cy="380" r="40" fill="#10b981" />
+    <text x="256" y="394" font-family="'Inter', sans-serif" font-size="44" font-weight="bold" fill="#ffffff" text-anchor="middle">$</text>
+  </g>
+</svg>
