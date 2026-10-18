@@ -18,6 +18,10 @@ class PersonalAssistantApp {
     this.continuousVoicePaused = false;
     this.continuousRecognition = null;
     this.isAssistantSpeakingLive = false;
+    this.bellaVoice = null;
+    this.bellaPitch = parseFloat(localStorage.getItem('bella_voice_pitch') || '1.18');
+    this.bellaRate = parseFloat(localStorage.getItem('bella_voice_rate') || '1.06');
+    this.selectedVoiceName = localStorage.getItem('bella_voice_name') || '';
     
     try {
       this.init();
@@ -35,6 +39,7 @@ class PersonalAssistantApp {
     this.setupContinuousVoice();
     this.setupTasksQuickAdd();
     this.setupAutoRefresh();
+    this.setupBellaVoice();
     this.loadTodayBriefing();
     this.loadThemes();
     this.loadSettings();
@@ -453,8 +458,7 @@ class PersonalAssistantApp {
       .replace(/\n+/g, '. ');
 
     this.speechUtterance = new SpeechSynthesisUtterance(cleanText);
-    this.speechUtterance.lang = 'pt-BR';
-    this.speechUtterance.rate = 1.05;
+    this.configureBellaUtterance(this.speechUtterance);
 
     this.speechUtterance.onstart = () => {
       this.isSpeaking = true;
@@ -1049,9 +1053,9 @@ class PersonalAssistantApp {
       if (!data.messages || data.messages.length === 0) {
         container.innerHTML = `
           <div class="chat-bubble assistant">
-            Olá! Sou o seu Assistente Pessoal Inteligente. Como posso te ajudar hoje?
+            🌸 <strong>Oi, Rhaony! Eu sou a Bella</strong>, sua assistente pessoal inteligente. Como posso te ajudar hoje?
             <div style="font-size:0.75rem; color:var(--text-muted); margin-top:6px;">
-              Dica: Experimente dizer <em>"Adicione reunião com o cliente às 15h"</em> ou <em>"Como está o clima em Itobi?"</em>.
+              Dica: Experimente falar ou digitar <em>"Adicione reunião com o cliente às 15h"</em> ou <em>"Como está o clima em Itobi?"</em>.
             </div>
             <div class="chat-bubble-footer">
               <span>Agora</span>
@@ -1216,8 +1220,7 @@ class PersonalAssistantApp {
       .replace(/\n+/g, '. ');
 
     const utterance = new SpeechSynthesisUtterance(clean);
-    utterance.lang = 'pt-BR';
-    utterance.rate = 1.05;
+    this.configureBellaUtterance(utterance);
     window.speechSynthesis.speak(utterance);
   }
 
@@ -1423,8 +1426,7 @@ class PersonalAssistantApp {
       .replace(/\n+/g, '. ');
 
     const utterance = new SpeechSynthesisUtterance(clean);
-    utterance.lang = 'pt-BR';
-    utterance.rate = 1.05;
+    this.configureBellaUtterance(utterance);
 
     utterance.onend = () => {
       this.isAssistantSpeakingLive = false;
@@ -1769,6 +1771,154 @@ class PersonalAssistantApp {
       await this.loadTasks();
       console.log('Auto-refresh executado às', new Date().toLocaleTimeString('pt-BR'));
     }, 30 * 60 * 1000);
+  }
+
+  /* =========================================================================
+     VOZ DA BELLA (SÍNTESE DE VOZ FEMININA JOVEM & PERSONALIZÁVEL)
+  ========================================================================= */
+  setupBellaVoice() {
+    if (!('speechSynthesis' in window)) return;
+
+    // Atualiza sliders com valores salvos
+    const pitchSlider = document.getElementById('bella-voice-pitch');
+    const rateSlider = document.getElementById('bella-voice-rate');
+    const pitchVal = document.getElementById('val-voice-pitch');
+    const rateVal = document.getElementById('val-voice-rate');
+
+    if (pitchSlider) pitchSlider.value = this.bellaPitch;
+    if (rateSlider) rateSlider.value = this.bellaRate;
+    if (pitchVal) pitchVal.textContent = `${this.bellaPitch.toFixed(2)}x`;
+    if (rateVal) rateVal.textContent = `${this.bellaRate.toFixed(2)}x`;
+
+    // Carrega vozes imediatamente ou via evento
+    this.populateBellaVoiceSelect();
+    window.speechSynthesis.onvoiceschanged = () => {
+      this.populateBellaVoiceSelect();
+    };
+  }
+
+  getBellaVoice() {
+    if (!('speechSynthesis' in window)) return null;
+    const voices = window.speechSynthesis.getVoices();
+    if (!voices || voices.length === 0) return null;
+
+    // 1. Se o usuário escolheu uma voz específica
+    if (this.selectedVoiceName) {
+      const chosen = voices.find(v => v.name === this.selectedVoiceName);
+      if (chosen) return chosen;
+    }
+
+    // 2. Prioridade para vozes femininas naturais em pt-BR de alta qualidade
+    // Microsoft Francisca Online (Natural) e Google português do Brasil são super jovens e naturais
+    const priorityFemaleNames = [
+      'francisca', 'leticia', 'letícia', 'luciana', 'vitória', 'vitoria', 
+      'heloisa', 'heloísa', 'maria', 'camila', 'fernanda', 'joana', 
+      'google português do brasil', 'brazil female'
+    ];
+
+    for (const name of priorityFemaleNames) {
+      const match = voices.find(v => 
+        (v.lang.includes('pt') || v.lang.includes('PT')) && 
+        v.name.toLowerCase().includes(name)
+      );
+      if (match) return match;
+    }
+
+    // 3. Qualquer voz pt-BR feminina ou com tag feminina
+    const anyFemalePt = voices.find(v => 
+      (v.lang === 'pt-BR' || v.lang.startsWith('pt')) && 
+      (v.name.toLowerCase().includes('female') || v.name.toLowerCase().includes('mulher'))
+    );
+    if (anyFemalePt) return anyFemalePt;
+
+    // 4. Qualquer voz pt-BR
+    const ptVoice = voices.find(v => v.lang === 'pt-BR' || v.lang.startsWith('pt'));
+    return ptVoice || null;
+  }
+
+  configureBellaUtterance(utterance) {
+    utterance.lang = 'pt-BR';
+    const bellaVoice = this.getBellaVoice();
+    if (bellaVoice) {
+      utterance.voice = bellaVoice;
+    }
+    // Tom jovial doce e velocidade moderna
+    utterance.pitch = this.bellaPitch || 1.18;
+    utterance.rate = this.bellaRate || 1.06;
+  }
+
+  populateBellaVoiceSelect() {
+    const select = document.getElementById('bella-voice-select');
+    if (!select || !('speechSynthesis' in window)) return;
+
+    const voices = window.speechSynthesis.getVoices();
+    if (!voices || voices.length === 0) return;
+
+    const ptVoices = voices.filter(v => v.lang.startsWith('pt') || v.lang.includes('BR'));
+    const activeVoice = this.getBellaVoice();
+
+    select.innerHTML = '';
+    
+    // Lista vozes em português primeiro
+    if (ptVoices.length > 0) {
+      ptVoices.forEach(v => {
+        const opt = document.createElement('option');
+        opt.value = v.name;
+        const isFemale = /francisca|leticia|letícia|luciana|maria|vitória|vitoria|heloisa|camila|fernanda|joana|google|female|mulher/i.test(v.name);
+        opt.textContent = `${isFemale ? '🌸 ' : '🎙️ '}${v.name} (${v.lang})`;
+        if (activeVoice && activeVoice.name === v.name) {
+          opt.selected = true;
+        }
+        select.appendChild(opt);
+      });
+    } else {
+      // Se não houver voz pt explícita no momento
+      voices.slice(0, 10).forEach(v => {
+        const opt = document.createElement('option');
+        opt.value = v.name;
+        opt.textContent = `${v.name} (${v.lang})`;
+        select.appendChild(opt);
+      });
+    }
+  }
+
+  onVoiceSelectChange(voiceName) {
+    this.selectedVoiceName = voiceName;
+    localStorage.setItem('bella_voice_name', voiceName);
+    this.showToast('Voz da Bella atualizada!');
+    this.testBellaVoice();
+  }
+
+  onPitchChange(val) {
+    this.bellaPitch = parseFloat(val);
+    localStorage.setItem('bella_voice_pitch', val);
+    const label = document.getElementById('val-voice-pitch');
+    if (label) label.textContent = `${this.bellaPitch.toFixed(2)}x`;
+  }
+
+  onRateChange(val) {
+    this.bellaRate = parseFloat(val);
+    localStorage.setItem('bella_voice_rate', val);
+    const label = document.getElementById('val-voice-rate');
+    if (label) label.textContent = `${this.bellaRate.toFixed(2)}x`;
+  }
+
+  testBellaVoice() {
+    if (!('speechSynthesis' in window)) {
+      this.showToast('Síntese de voz não suportada pelo seu navegador.');
+      return;
+    }
+    window.speechSynthesis.cancel();
+
+    const sampleText = "Oi, Rhaony! Eu sou a Bella, sua assistente pessoal! Minha voz já está configurada como você pediu. Como posso te ajudar hoje?";
+    const utterance = new SpeechSynthesisUtterance(sampleText);
+    this.configureBellaUtterance(utterance);
+
+    utterance.onstart = () => {
+      this.showToast('🌸 Bella falando...');
+    };
+
+    window.speechSynthesis.speak(utterance);
   }
 
   escapeHtml(text) {

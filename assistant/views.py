@@ -30,9 +30,9 @@ def manifest_view(request):
     bg_color = active_theme.bg_gradient_start if active_theme else "#0f172a"
     
     manifest_data = {
-        "name": "Assistente Pessoal - Briefing Diário",
-        "short_name": "Assistente",
-        "description": "Seu resumo diário inteligente com Agenda, E-mails, Clima e Cotações via Gemini IA.",
+        "name": "Bella - Assistente Pessoal Inteligente",
+        "short_name": "Bella IA",
+        "description": "Bella: sua assistente pessoal inteligente com voz jovem, agenda, e-mails, clima e IA Gemini.",
         "start_url": "/",
         "display": "standalone",
         "background_color": bg_color,
@@ -58,8 +58,8 @@ def manifest_view(request):
 
 def service_worker_view(request):
     """Entrega o Service Worker com headers adequados e estratégia Network-First para atualizações rápidas"""
-    sw_code = """// Service Worker do Assistente Pessoal PWA
-const CACHE_NAME = 'assistente-pwa-v6';
+    sw_code = """// Service Worker da Bella PWA
+const CACHE_NAME = 'bella-pwa-v7';
 const STATIC_ASSETS = [
   '/',
   '/manifest.json',

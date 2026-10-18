@@ -236,7 +236,7 @@ class GeminiService:
         else:
             emails_str = "- Nenhum e-mail urgente ou não lido pendente.\n"
 
-        prompt = f"""Você é um assistente pessoal encarregado de enviar um resumo das principais informações do dia para o usuário.
+        prompt = f"""Você é a Bella, uma assistente pessoal inteligente, jovem, carismática, alegre, empática e prestativa. Você fala de forma natural, moderna e agradável, em português brasileiro, com tom de uma moça jovem e profissional.
 
 Dados atuais do dia:
 1. CLIMA EM {weather['city'].upper()}:
@@ -288,7 +288,7 @@ INSTRUÇÕES OBRIGATÓRIAS DE RESPOSTA E TOM DE VOZ:
         
         email_block = "\n".join([f"  * **{em.sender}**: {em.subject} - {em.snippet[:80]}..." for em in email_highlights]) if email_highlights else "  * Caixa de entrada em dia, sem e-mails críticos pendentes."
 
-        fallback_briefing = f"""Bom dia! Espero que você tenha uma excelente e produtiva jornada hoje. Aqui está o seu resumo essencial:
+        fallback_briefing = f"""Olá, Rhaony! Aqui é a Bella, sua assistente pessoal! Preparei com muito carinho o seu resumo essencial para hoje:
 
 * **📅 Agenda de Hoje:**
 {agenda_block}
@@ -430,7 +430,7 @@ class ChatAssistantService:
         emails_str = "\n".join([f"- De {em.sender}: {em.subject} ({em.snippet[:60]}...)" for em in emails]) or "Nenhum e-mail não lido."
 
         # Prompt com capacidade de chamada de ações (Action Calling)
-        system_instruction = f"""Você é o Assistente Pessoal Inteligente do usuário no smartphone.
+        system_instruction = f"""Você é a Bella, uma assistente pessoal inteligente, jovem, carismática, alegre, empática e prestativa. Você fala de forma natural, moderna, doce e agradável, em português brasileiro. Seu tom é o de uma moça jovem, profissional e atenciosa.
 Data/Hora atual no Brasil: {now.strftime('%d/%m/%Y %H:%M:%S (%A)')}.
 Cidade do usuário: {city}.
 Clima atual: {weather['condition']}, {weather['current_temp']}°C (Mín: {weather['temp_min']}°C, Máx: {weather['temp_max']}°C, Chuva: {weather['rain_prob']}%).
@@ -522,13 +522,13 @@ Responda EXCLUSIVAMENTE o objeto JSON válido, sem crases extras ou markdown env
                     "is_important": any(w in lower for w in ["urgente", "importante", "prioridade"])
                 }
                 day_label = "amanhã" if action_details["date_offset_days"] == 1 else "hoje"
-                reply_text = f"Pronto! Adicionei '{clean_title}' para {day_label} às {hour:02d}:{minute:02d} na sua agenda."
+                reply_text = f"Prontinho! Já anotei '{clean_title}' na sua agenda para {day_label} às {hour:02d}:{minute:02d}!"
             
             elif any(k in lower for k in ["clima", "tempo", "chov", "temperatura", "chuva", "calor", "frio"]):
-                reply_text = f"Em {city}, a previsão para hoje é de tempo {weather['condition'].lower()}, com temperatura atual de {weather['current_temp']}°C (mínima de {weather['temp_min']}°C e máxima de {weather['temp_max']}°C). A chance de chuva é de {weather['rain_prob']}%."
+                reply_text = f"Em {city}, a previsão para hoje é de tempo {weather['condition'].lower()}, com temperatura atual de {weather['current_temp']}°C. A máxima chega a {weather['temp_max']}°C e a chance de chuva é de {weather['rain_prob']}%."
             
             elif any(k in lower for k in ["dólar", "dolar", "cotação", "cotacao", "câmbio", "cambio"]):
-                reply_text = f"O Dólar comercial está cotado a R$ {currency['bid']} para compra e R$ {currency['ask']} para venda, com variação recente de {currency['variation']}."
+                reply_text = f"O Dólar comercial está cotado a R$ {currency['bid']} para compra e R$ {currency['ask']} para venda, com variação de {currency['variation']}."
             
             elif any(k in lower for k in ["tarefa", "afazer", "anote", "lembrete"]):
                 clean_title = re.sub(r'^(?:por favor,?\s*)?(?:adicione|adicionar|crie|criar|coloque|anote)\s*(?:uma\s*)?(?:tarefa|afazer|lembrete)?\s*(?:de|para)?\s*', '', user_text, flags=re.IGNORECASE).strip() or "Nova tarefa"
@@ -539,17 +539,17 @@ Responda EXCLUSIVAMENTE o objeto JSON válido, sem crases extras ou markdown env
                     "priority": prio,
                     "category": "personal" if any(w in lower for w in ["casa", "mercado", "comprar", "pessoal"]) else "work"
                 }
-                reply_text = f"Certo! Adicionei a tarefa '{clean_title}' à sua lista de afazeres."
+                reply_text = f"Com certeza! Já criei a tarefa '{clean_title}' na sua lista de afazeres!"
 
             elif any(k in lower for k in ["agenda", "compromisso", "o que tenho", "reunião"]):
                 if events:
                     ev_items = ", ".join([f"{timezone.localtime(e.start_time).strftime('%H:%M')} - {e.title}" for e in events[:3]])
                     reply_text = f"Seus próximos compromissos são: {ev_items}."
                 else:
-                    reply_text = "Você não tem nenhum compromisso agendado para hoje. Seu dia está livre!"
+                    reply_text = "Você está com o dia totalmente livre, sem nenhum compromisso agendado!"
             
             else:
-                reply_text = f"Olá! Posso ajudar você a organizar sua agenda, consultar previsão do tempo em {city}, acompanhar a cotação do dólar ou registrar e-mails prioritários. Como posso te auxiliar agora?"
+                reply_text = f"Oi! Eu sou a Bella, sua assistente pessoal! Posso agendar seus compromissos, ver o clima para {city}, acompanhar moedas ou anotar tarefas para você. Como posso te ajudar agora?"
 
         # 3. Execução da Ação no Banco de Dados
         executed_action_log = None

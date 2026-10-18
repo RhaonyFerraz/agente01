@@ -2476,3 +2476,45 @@ body {
   background: rgba(16, 185, 129, 0.25);
 }
 
+/* =========================================================================
+   BELLA - ESTILOS VISUAIS DA MARCA & VOZ JOVEM
+========================================================================= */
+.brand-title {
+  font-family: 'Outfit', sans-serif;
+  font-weight: 700;
+  letter-spacing: -0.5px;
+  background: linear-gradient(135deg, #f472b6, #c084fc, #60a5fa);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.bella-sparkle {
+  font-size: 0.95rem;
+  animation: sparkle-pulse 2s infinite ease-in-out;
+  display: inline-block;
+  -webkit-text-fill-color: initial;
+}
+
+@keyframes sparkle-pulse {
+  0%, 100% { transform: scale(1) rotate(0deg); opacity: 0.8; }
+  50% { transform: scale(1.2) rotate(15deg); opacity: 1; }
+}
+
+.range-slider {
+  accent-color: #ec4899;
+  cursor: pointer;
+}
+
+#card-bella-voice .badge-accent {
+  background: rgba(236, 72, 153, 0.2);
+  color: #f472b6;
+  border: 1px solid rgba(236, 72, 153, 0.4);
+  padding: 3px 8px;
+  border-radius: 12px;
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+

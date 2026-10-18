@@ -4,10 +4,10 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <meta name="theme-color" content="{{ theme.primary_color|default:'#6366f1' }}">
-  <meta name="description" content="Assistente Pessoal inteligente com briefing diário, clima em Itobi/SP, cotação do dólar e agenda com IA Gemini.">
+  <meta name="description" content="Bella - Assistente Pessoal inteligente com voz jovem, briefing diário, clima em Itobi/SP, cotação do dólar e agenda com IA Gemini.">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <title>Assistente Pessoal | Resumo Diário</title>
+  <title>Bella | Assistente Pessoal Inteligente</title>
 
   <!-- Google Fonts: Inter & Outfit -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -20,7 +20,7 @@
   <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
 
   <!-- Estilos Principais -->
-  <link rel="stylesheet" href="/static/css/styles.css?v=6">
+  <link rel="stylesheet" href="/static/css/styles.css?v=7">
   
   <style id="dynamic-theme-vars">
     :root {
@@ -48,14 +48,14 @@
           <span id="header-status">Online</span>
         </div>
         <div class="header-titles">
-          <h1>Assistente Pessoal</h1>
+          <h1 class="brand-title">Bella <span class="bella-sparkle">✨</span></h1>
           <span id="current-date-badge" class="date-badge">Carregando...</span>
         </div>
       </div>
       <div class="header-actions">
-        <button id="btn-voice-live-trigger" class="btn-live-voice pulse-glow" title="Modo Áudio Contínuo (Mãos-Livres)" aria-label="Modo Áudio Contínuo" onclick="app.startContinuousVoiceMode()">
+        <button id="btn-voice-live-trigger" class="btn-live-voice pulse-glow" title="Conversar com a Bella (Voz Contínua)" aria-label="Modo Áudio Contínuo" onclick="app.startContinuousVoiceMode()">
           <span class="live-mic-pulse">🎙️</span>
-          <span class="live-voice-text">Falar</span>
+          <span class="live-voice-text">Falar com Bella</span>
         </button>
         <button id="btn-voice-read" class="icon-btn" title="Ouvir Resumo com Voz (TTS)" aria-label="Ouvir Resumo">
           <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -482,6 +482,43 @@
           </div>
         </div>
 
+        <!-- Configuração da Voz da Bella (Voz Feminina Jovem) -->
+        <div class="card glass-card settings-card" id="card-bella-voice">
+          <div class="card-header">
+            <h3>🎙️ Voz da Bella (Moça Jovem)</h3>
+            <span class="badge badge-accent">Voz Feminina</span>
+          </div>
+          <p class="card-explainer">
+            A Bella conversa com voz natural e jovial. Escolha a voz feminina preferida do seu dispositivo e ajuste o tom ou velocidade da fala.
+          </p>
+          <div class="settings-form">
+            <div class="form-group">
+              <label for="bella-voice-select">Voz Selecionada para a Bella:</label>
+              <select id="bella-voice-select" class="input-text" onchange="app.onVoiceSelectChange(this.value)">
+                <option value="">Detectando melhor voz feminina...</option>
+              </select>
+              <small class="help-text">Recomendadas: <strong>Microsoft Francisca (Natural)</strong>, <strong>Google português do Brasil</strong> ou <strong>Luciana</strong>.</small>
+            </div>
+
+            <div class="voice-sliders-grid" style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:8px;">
+              <div class="form-group">
+                <label for="bella-voice-pitch">Tom Jovial: <strong id="val-voice-pitch">1.18x</strong></label>
+                <input type="range" id="bella-voice-pitch" min="0.8" max="1.5" step="0.05" value="1.18" oninput="app.onPitchChange(this.value)" class="range-slider" style="width:100%;">
+              </div>
+              <div class="form-group">
+                <label for="bella-voice-rate">Velocidade: <strong id="val-voice-rate">1.06x</strong></label>
+                <input type="range" id="bella-voice-rate" min="0.8" max="1.4" step="0.02" value="1.06" oninput="app.onRateChange(this.value)" class="range-slider" style="width:100%;">
+              </div>
+            </div>
+
+            <div class="modal-actions" style="margin-top:12px; display:flex; gap:10px;">
+              <button type="button" class="btn-primary" onclick="app.testBellaVoice()" style="flex:1;">
+                <span>🌸 Ouvir Teste da Bella</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
         <!-- Configurações de Notificações Telegram & WhatsApp -->
         <div class="card glass-card settings-card">
           <div class="card-header">
@@ -699,7 +736,7 @@
       <div class="voice-live-header">
         <div class="voice-live-title">
           <span class="live-dot pulse"></span>
-          <span>Modo Conversa por Voz</span>
+          <span>Conversar com a Bella 🌸</span>
         </div>
         <button class="modal-close" onclick="app.stopContinuousVoiceMode()">&times;</button>
       </div>
@@ -710,7 +747,7 @@
         <div class="voice-ring ring-2"></div>
         <div class="voice-ring ring-1"></div>
         <div id="voice-main-orb" class="voice-main-orb state-listening">
-          <span class="voice-orb-icon">🎙️</span>
+          <span class="voice-orb-icon">🌸</span>
         </div>
         <!-- Barras de Frequência Sonora -->
         <div class="voice-soundbars" id="voice-soundbars">
@@ -727,7 +764,7 @@
       <!-- Status Atual -->
       <div class="voice-status-wrap">
         <span id="voice-live-status-pill" class="voice-status-pill state-listening">
-          🟢 Ouvindo você... Fale naturalmente
+          🟢 Bella está te ouvindo... Fale com ela!
         </span>
       </div>
 
@@ -738,8 +775,8 @@
           <p id="voice-live-user-text" class="voice-bubble user">"Aguardando você falar..."</p>
         </div>
         <div class="voice-speech-row assistant-row">
-          <span class="bubble-tag ai">Assistente</span>
-          <p id="voice-live-ai-text" class="voice-bubble assistant">"Olá! Pode falar qualquer pergunta, agendar compromisso ou pedir uma tarefa."</p>
+          <span class="bubble-tag ai">Bella</span>
+          <p id="voice-live-ai-text" class="voice-bubble assistant">"Oi! Eu sou a Bella. Como posso te ajudar agora? Pode falar!"</p>
         </div>
       </div>
 
@@ -766,6 +803,6 @@
   <div id="toast-notification" class="toast hidden"></div>
 
   <!-- Scripts -->
-  <script src="/static/js/app.js?v=6"></script>
+  <script src="/static/js/app.js?v=7"></script>
 </body>
 </html>
