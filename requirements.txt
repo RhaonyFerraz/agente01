@@ -6,6 +6,7 @@ django-cors-headers>=4.3.0
 # IA & Integrações
 google-generativeai>=0.8.0
 edge-tts>=7.0.0
+ddgs>=9.0.0
 requests>=2.31.0
 python-dotenv>=1.0.0
 

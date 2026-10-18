@@ -208,15 +208,109 @@ class WeeklyForecastService:
         today = datetime.date.today()
         return [
             {"date": str(today + datetime.timedelta(days=i)),
-             "weekday": ["Seg","Ter","Qua","Qui","Sex","Sáb","Dom"][(today.weekday() + i) % 7],
-             "temp_max": 26.0, "temp_min": 18.0, "rain_prob": 40, "icon": "⛅"}
-            for i in range(7)
-        ]
+             "weekday": ["Seg","Ter","Qua","Qui","Sex","Sáb","Dom"][(today.weekday() + iclass WebSearchService:
+    """Serviço gratuito de pesquisa na web em tempo real (DuckDuckGo + Google News RSS)"""
+
+    @staticmethod
+    def search_news(query="noticias brasil economia tecnologia", max_results=5):
+        """Busca notícias recentes em tempo real via Google News RSS (100% gratuito e atualizado)"""
+        import urllib.parse
+        import xml.etree.ElementTree as ET
+        import re
+
+        url = f"https://news.google.com/rss/search?q={urllib.parse.quote(query)}&hl=pt-BR&gl=BR&ceid=BR:pt-419"
+        results = []
+        try:
+            resp = requests.get(url, timeout=5)
+            if resp.status_code == 200:
+                root = ET.fromstring(resp.content)
+                items = root.findall('.//item')[:max_results]
+                for it in items:
+                    title_elem = it.find('title')
+                    link_elem = it.find('link')
+                    desc_elem = it.find('description')
+                    pub_elem = it.find('pubDate')
+
+                    full_title = title_elem.text if title_elem is not None else ""
+                    source_name = "Notícias"
+                    clean_title = full_title
+                    if " - " in full_title:
+                        parts = full_title.rsplit(" - ", 1)
+                        clean_title = parts[0].strip()
+                        source_name = parts[1].strip()
+
+                    raw_desc = desc_elem.text if desc_elem is not None else ""
+                    clean_desc = re.sub(r'<[^>]+>', '', raw_desc).strip()
+
+                    link = link_elem.text if link_elem is not None else ""
+                    pub_date = pub_elem.text if pub_elem is not None else ""
+
+                    results.append({
+                        "title": clean_title,
+                        "source": source_name,
+                        "snippet": clean_desc or clean_title,
+                        "url": link,
+                        "published_at": pub_date
+                    })
+        except Exception as e:
+            print(f"Erro ao buscar notícias RSS: {e}")
+
+        # Se o RSS falhar, tenta via ddgs
+        if not results:
+            try:
+                from ddgs import DDGS
+                with DDGS() as ddgs:
+                    ddg_news = list(ddgs.news(query, region="pt-br", max_results=max_results))
+                    for n in ddg_news:
+                        results.append({
+                            "title": n.get("title", ""),
+                            "source": n.get("source", "Web"),
+                            "snippet": n.get("body", ""),
+                            "url": n.get("url", ""),
+                            "published_at": n.get("date", "")
+                        })
+            except Exception as e:
+                print(f"Erro fallback ddgs news: {e}")
+
+        return results
+
+    @staticmethod
+    def search_web(query, max_results=4):
+        """Busca em tempo real na internet via DuckDuckGo (DDGS)"""
+        if not query or not query.strip():
+            return []
+
+        clean_q = query.strip()
+        results = []
+        try:
+            from ddgs import DDGS
+            with DDGS() as ddgs:
+                ddg_res = list(ddgs.text(clean_q, region="pt-br", max_results=max_results))
+                for item in ddg_res:
+                    results.append({
+                        "title": item.get("title", ""),
+                        "snippet": item.get("body", ""),
+                        "url": item.get("href", "")
+                    })
+        except Exception as e:
+            print(f"Erro na busca web DDGS: {e}")
+
+        # Se não houver resultados na busca geral, tenta via notícias RSS
+        if not results:
+            news_res = WebSearchService.search_news(clean_q, max_results=max_results)
+            for n in news_res:
+                results.append({
+                    "title": n.get("title", ""),
+                    "snippet": n.get("snippet", ""),
+                    "url": n.get("url", "")
+                })
+
+        return results
 
 
 class GeminiService:
     @staticmethod
-    def generate_briefing(weather, currency, agenda_events, email_highlights, custom_api_key=None):
+    def generate_briefing(weather, currency, agenda_events, email_highlights, news_items=None, custom_api_key=None):
         """Gera o resumo executivo inteligente usando Google Gemini AI (Google AI Studio)"""
         api_key = custom_api_key or os.getenv("GEMINI_API_KEY") or getattr(settings, "GEMINI_API_KEY", "")
         
@@ -235,6 +329,13 @@ class GeminiService:
                 emails_str += f"- De: {em.sender} | Assunto: {em.subject} {'[IMPORTANTE]' if em.is_important else ''}\n  Resumo: {em.snippet}\n"
         else:
             emails_str = "- Nenhum e-mail urgente ou não lido pendente.\n"
+
+        news_str = ""
+        if news_items:
+            for n in news_items[:3]:
+                news_str += f"- {n.get('title')} ({n.get('source', 'Notícias')})\n"
+        else:
+            news_str = "- Sem notícias extraordinárias no momento.\n"
 
         prompt = f"""Você é a Bella, uma assistente pessoal inteligente, jovem, carismática, alegre, empática e prestativa. Você fala de forma natural, moderna e agradável, em português brasileiro, com tom de uma moça jovem e profissional.
 
@@ -257,6 +358,9 @@ Dados atuais do dia:
 4. E-MAILS E DESTAQUES:
 {emails_str}
 
+5. PRINCIPAIS NOTÍCIAS DO MOMENTO (EM TEMPO REAL):
+{news_str}
+
 INSTRUÇÕES OBRIGATÓRIAS DE RESPOSTA E TOM DE VOZ:
 - Saudação: Cumprimente de forma cortez, amigável e motivadora para o início do dia.
 - Formatação: Apresente os dados em tópicos curtos e organizados com marcadores (bullet points) e emojis elegantes.
@@ -265,6 +369,7 @@ INSTRUÇÕES OBRIGATÓRIAS DE RESPOSTA E TOM DE VOZ:
   * E-mails: Destaque mensagens prioritárias que exigem atenção.
   * Clima: Destaque máxima/mínima e recomendação prática (ex: levar guarda-chuva se houver chuva).
   * Cotação de Moedas: Informe o Dólar comercial de forma rápida.
+  * Notícias: Faça um resumo ultra-rápido de 1 a 2 manchetes mais relevantes do dia.
 - Clareza: Seja direto ao ponto para leitura rápida em tela de smartphone ou notificação.
 - Não invente dados fora do fornecido. Seja objetivo e profissional.
 """
@@ -288,6 +393,8 @@ INSTRUÇÕES OBRIGATÓRIAS DE RESPOSTA E TOM DE VOZ:
         
         email_block = "\n".join([f"  * **{em.sender}**: {em.subject} - {em.snippet[:80]}..." for em in email_highlights]) if email_highlights else "  * Caixa de entrada em dia, sem e-mails críticos pendentes."
 
+        news_block = "\n".join([f"  * **{n.get('source', 'Notícia')}**: {n.get('title')}" for n in (news_items or [])[:3]]) if news_items else "  * Notícias do momento em atualização."
+
         fallback_briefing = f"""Olá, Rhaony! Aqui é a Bella, sua assistente pessoal! Preparei com muito carinho o seu resumo essencial para hoje:
 
 * **📅 Agenda de Hoje:**
@@ -301,6 +408,15 @@ INSTRUÇÕES OBRIGATÓRIAS DE RESPOSTA E TOM DE VOZ:
   * Condição: {weather['condition']}. Chance de chuva em {weather['rain_prob']}%. {rain_note}
 
 * **💵 Cotação do Dólar Comercial (USD/BRL):**
+  * Compra: **R$ {currency['bid']}** | Venda: **R$ {currency['ask']}**
+  * Variação recente: {currency['variation']}
+
+* **📰 Principais Notícias do Dia:**
+{news_block}
+
+*Tenha um ótimo e produtivo dia!*
+"""
+        return fallback_briefing��� Cotação do Dólar Comercial (USD/BRL):**
   * Compra: **R$ {currency['bid']}** | Venda: **R$ {currency['ask']}**
   * Variação recente: {currency['variation']}
 
