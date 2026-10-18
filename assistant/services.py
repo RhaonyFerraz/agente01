@@ -208,7 +208,14 @@ class WeeklyForecastService:
         today = datetime.date.today()
         return [
             {"date": str(today + datetime.timedelta(days=i)),
-             "weekday": ["Seg","Ter","Qua","Qui","Sex","Sáb","Dom"][(today.weekday() + iclass WebSearchService:
+             "weekday": ["Seg","Ter","Qua","Qui","Sex","Sáb","Dom"][(today.weekday() + i) % 7],
+             "temp_max": 26.0, "temp_min": 18.0, "rain_prob": 40, "icon": "⛅"}
+            for i in range(7)
+        ]
+
+
+
+class WebSearchService:
     """Serviço gratuito de pesquisa na web em tempo real (DuckDuckGo + Google News RSS)"""
 
     @staticmethod
@@ -306,7 +313,6 @@ class WeeklyForecastService:
                 })
 
         return results
-
 
 class GeminiService:
     @staticmethod
@@ -408,15 +414,6 @@ INSTRUÇÕES OBRIGATÓRIAS DE RESPOSTA E TOM DE VOZ:
   * Condição: {weather['condition']}. Chance de chuva em {weather['rain_prob']}%. {rain_note}
 
 * **💵 Cotação do Dólar Comercial (USD/BRL):**
-  * Compra: **R$ {currency['bid']}** | Venda: **R$ {currency['ask']}**
-  * Variação recente: {currency['variation']}
-
-* **📰 Principais Notícias do Dia:**
-{news_block}
-
-*Tenha um ótimo e produtivo dia!*
-"""
-        return fallback_briefing��� Cotação do Dólar Comercial (USD/BRL):**
   * Compra: **R$ {currency['bid']}** | Venda: **R$ {currency['ask']}**
   * Variação recente: {currency['variation']}
 
