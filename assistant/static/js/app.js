@@ -1015,6 +1015,12 @@ class PersonalAssistantApp {
       this.stopVoiceInput();
     } else {
       try {
+        // Interrompe qualquer áudio tocando para evitar retorno/eco no microfone
+        this.stopAllAudio();
+        // Pausa temporariamente a detecção da wake word para não haver conflito no hardware do microfone
+        if (this.wakeWordRecognition) {
+          try { this.wakeWordRecognition.stop(); } catch(e) {}
+        }
         this.recognition.start();
       } catch (err) {
         console.warn('Erro ao iniciar reconhecimento:', err);
@@ -1028,6 +1034,13 @@ class PersonalAssistantApp {
     const recBar = document.getElementById('voice-recording-indicator');
     if (micBtn) micBtn.classList.remove('recording');
     if (recBar) recBar.classList.add('hidden');
+
+    // Retoma detecção da Wake Word se estava ativa
+    if (this.wakeWordActive && this.wakeWordRecognition && !this.continuousVoiceActive) {
+      setTimeout(() => {
+        try { this.wakeWordRecognition.start(); } catch(e) {}
+      }, 400);
+    }
   }
 
   toggleVoiceReply() {
@@ -1285,6 +1298,11 @@ class PersonalAssistantApp {
     this.continuousVoicePaused = false;
     this.isAssistantSpeakingLive = false;
 
+    // Pausa a wake word durante a sessão contínua para evitar concorrência no microfone
+    if (this.wakeWordRecognition) {
+      try { this.wakeWordRecognition.stop(); } catch(e) {}
+    }
+
     const modal = document.getElementById('modal-voice-live');
     if (modal) modal.classList.remove('hidden');
 
@@ -1320,20 +1338,38 @@ class PersonalAssistantApp {
     }
     try {
       this.setLiveVoiceStatus('listening');
-      this.continuousRecognition.start();
+      try {
+        this.continuousRecognition.start();
+      } catch (e) {
+        // Já pode estar em execução
+      }
 
-      // Conecta o microfone ao analisador Web Audio API para o orbe pulsar dinamicamente
-      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia && !this.micStream) {
-        navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
-          this.micStream = stream;
-          if (this.continuousVoiceActive && !this.isAssistantSpeakingLive && !this.continuousVoicePaused) {
+      // Ativa microfone com cancelamento de eco, supressão de ruído e controle automático de ganho
+      const audioConstraints = {
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
+        }
+      };
+
+      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+        if (!this.micStream || !this.micStream.active) {
+          navigator.mediaDevices.getUserMedia(audioConstraints).then(stream => {
+            this.micStream = stream;
+            if (this.continuousVoiceActive && !this.isAssistantSpeakingLive && !this.continuousVoicePaused) {
+              this.startMicrophoneVisualizer(this.micStream);
+            }
+          }).catch(err => {
+            console.warn('Microfone para Web Audio API não concedido:', err);
+          });
+        } else {
+          // Reativa faixas de áudio caso tenham sido temporariamente silenciadas
+          this.micStream.getAudioTracks().forEach(t => { t.enabled = true; });
+          if (!this.isAssistantSpeakingLive && !this.continuousVoicePaused) {
             this.startMicrophoneVisualizer(this.micStream);
           }
-        }).catch(err => {
-          console.warn('Microfone para Web Audio API não concedido:', err);
-        });
-      } else if (this.micStream) {
-        this.startMicrophoneVisualizer(this.micStream);
+        }
       }
     } catch (e) {
       // Ignora erro se já estiver ativo
@@ -1345,6 +1381,10 @@ class PersonalAssistantApp {
       try {
         this.continuousRecognition.stop();
       } catch (e) {}
+    }
+    // Silencia as faixas de áudio temporariamente durante o processamento da IA ou fala da Bella
+    if (this.micStream) {
+      this.micStream.getAudioTracks().forEach(t => { t.enabled = false; });
     }
     this.stopVisualizerLoop();
   }
@@ -1421,12 +1461,14 @@ class PersonalAssistantApp {
   speakLiveUtterance(text, onComplete) {
     this.isAssistantSpeakingLive = true;
     this.setLiveVoiceStatus('speaking');
+    this.stopLiveListening(); // Silencia o microfone enquanto a Bella fala para evitar feedback e eco
 
     this.playBellaSpeech(text, {
       isLive: true,
       onStart: () => {
         this.isAssistantSpeakingLive = true;
         this.setLiveVoiceStatus('speaking');
+        this.stopLiveListening();
       }
     }, () => {
       this.isAssistantSpeakingLive = false;
@@ -1480,12 +1522,33 @@ class PersonalAssistantApp {
     this.isAssistantSpeakingLive = false;
 
     this.stopLiveListening();
+    this.stopMicrophoneStream(); // Libera e encerra as faixas físicas do microfone
     if (window.speechSynthesis) window.speechSynthesis.cancel();
 
     const modal = document.getElementById('modal-voice-live');
     if (modal) modal.classList.add('hidden');
 
+    // Retoma escuta da Wake Word se estiver ativada nas configurações
+    if (this.wakeWordActive && this.wakeWordRecognition) {
+      setTimeout(() => {
+        try { this.wakeWordRecognition.start(); } catch(e) {}
+      }, 500);
+    }
+
     this.showToast('Modo de voz encerrado.');
+  }
+
+  stopMicrophoneStream() {
+    if (this.micSource) {
+      try { this.micSource.disconnect(); } catch(e) {}
+      this.micSource = null;
+    }
+    if (this.micStream) {
+      try {
+        this.micStream.getTracks().forEach(track => track.stop());
+      } catch(e) {}
+      this.micStream = null;
+    }
   }
 
   /* =========================================================================
@@ -1968,6 +2031,9 @@ class PersonalAssistantApp {
       }
       this.micSource = this.audioContext.createMediaStreamSource(stream);
       this.micSource.connect(this.analyser);
+      // ATENÇÃO: NUNCA conecte o micSource nem o analyser a audioContext.destination!
+      // O microfone serve unicamente para ler frequências para o visualizador (orbe).
+      // Se for roteado para o destino, causa eco/retorno imediato e microfonia nos alto-falantes.
       this.runVisualizerLoop('mic');
     } catch(e) {
       console.warn('Erro ao conectar microfone ao visualizador:', e);
@@ -1982,7 +2048,10 @@ class PersonalAssistantApp {
       if (!audioEl._sourceConnected) {
         const source = this.audioContext.createMediaElementSource(audioEl);
         source.connect(this.analyser);
-        this.analyser.connect(this.audioContext.destination);
+        // Conecta o source diretamente aos alto-falantes para reprodução normal
+        source.connect(this.audioContext.destination);
+        // NOTA: NUNCA conectar this.analyser.connect(this.audioContext.destination),
+        // pois o analyser é compartilhado com o microfone e causaria eco!
         audioEl._sourceConnected = true;
       }
       this.runVisualizerLoop('speaker');

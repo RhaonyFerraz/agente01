@@ -44,3 +44,5 @@ Thumbs.db
 
 # Backups
 backup_*.json
+*_orig.py
+*_sample.html
