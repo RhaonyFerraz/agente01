@@ -513,7 +513,74 @@ class BriefingOrchestrator:
 
 
 class ChatAssistantService:
-    """Serviço de conversação interativa por voz e texto com o Google Gemini e execução de ações"""
+    """Serviço de conversação interativa por voz e texto com Google Gemini Function Calling e execução de ferramentas"""
+
+    @staticmethod
+    def parse_date_string(date_str: str, base_date: datetime.date = None) -> datetime.date:
+        """Interpreta termos temporais em português ou formatos de data"""
+        import re
+        if not base_date:
+            base_date = timezone.localdate()
+        if not date_str:
+            return base_date
+        
+        clean = str(date_str).lower().strip()
+        if "hoje" in clean:
+            return base_date
+        if "amanhã" in clean or "amanha" in clean:
+            return base_date + datetime.timedelta(days=1)
+        if "depois de amanhã" in clean or "depois de amanha" in clean:
+            return base_date + datetime.timedelta(days=2)
+        
+        weekdays = {
+            "segunda": 0, "segunda-feira": 0,
+            "terça": 1, "terca": 1, "terça-feira": 1,
+            "quarta": 2, "quarta-feira": 2,
+            "quinta": 3, "quinta-feira": 3,
+            "sexta": 4, "sexta-feira": 4,
+            "sábado": 5, "sabado": 5,
+            "domingo": 6
+        }
+        for name, wday in weekdays.items():
+            if name in clean:
+                days_ahead = (wday - base_date.weekday()) % 7
+                if days_ahead == 0:
+                    days_ahead = 7
+                return base_date + datetime.timedelta(days=days_ahead)
+                
+        # Padrão YYYY-MM-DD
+        match_iso = re.search(r'(\d{4})-(\d{1,2})-(\d{1,2})', clean)
+        if match_iso:
+            y, m, d = map(int, match_iso.groups())
+            return datetime.date(y, m, d)
+            
+        # Padrão DD/MM/YYYY ou DD/MM
+        match_br = re.search(r'(\d{1,2})[/.-](\d{1,2})(?:[/.-](\d{2,4}))?', clean)
+        if match_br:
+            d = int(match_br.group(1))
+            m = int(match_br.group(2))
+            y = int(match_br.group(3)) if match_br.group(3) else base_date.year
+            if y < 100:
+                y += 2000
+            return datetime.date(y, m, d)
+            
+        return base_date
+
+    @staticmethod
+    def parse_time_string(time_str: str) -> tuple:
+        """Extrai horas e minutos de expressões textuais como '15:30', '16h', '16h45', 'às 9'"""
+        import re
+        if not time_str:
+            return (9, 0)
+        clean = str(time_str).lower().strip()
+        match = re.search(r'(?:às|as|à|a)?\s*(\d{1,2})(?:[:h](\d{2})|h)?', clean)
+        if match:
+            h = int(match.group(1))
+            m = int(match.group(2)) if match.group(2) else 0
+            h = max(0, min(h, 23))
+            m = max(0, min(m, 59))
+            return (h, m)
+        return (9, 0)
 
     @staticmethod
     def process_message(user_text, api_key_override=None):
@@ -526,234 +593,336 @@ class ChatAssistantService:
         lon = float(pref.longitude) if pref else settings.DEFAULT_LON
         api_key = api_key_override or (pref.gemini_api_key if pref and pref.gemini_api_key else None) or getattr(settings, "GEMINI_API_KEY", "")
 
-        # Memória Conversacional Contínua: busca as mensagens recentes anteriores
-        recent_history = list(ChatMessage.objects.order_by('-created_at')[:8])
-        recent_history.reverse()
-        history_lines = []
-        for msg in recent_history:
-            sender = "Usuário" if msg.role == 'user' else "Bella"
-            history_lines.append(f"- {sender}: {msg.content}")
-        history_str = "\n".join(history_lines) if history_lines else "Início da conversa, sem histórico anterior."
-
-        # Registra mensagem do usuário no banco
-        user_msg = ChatMessage.objects.create(role='user', content=user_text)
-
-        # Contexto atualizado em tempo real
         now = timezone.localtime()
         weather = WeatherService.get_weather(lat=lat, lon=lon, city=city)
         currency = CurrencyService.get_usd_rate()
-        
-        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-        today_end = now.replace(hour=23, minute=59, second=59, microsecond=999999)
-        events = list(CalendarEvent.objects.filter(start_time__gte=today_start).order_by('start_time')[:10])
-        emails = list(EmailHighlight.objects.filter(is_read=False).order_by('-received_at')[:5])
 
-        events_str = "\n".join([f"- ID {ev.id}: {timezone.localtime(ev.start_time).strftime('%d/%m %H:%M')} - {ev.title} ({ev.get_category_display()})" for ev in events]) or "Nenhum compromisso agendado."
-        emails_str = "\n".join([f"- De {em.sender}: {em.subject} ({em.snippet[:60]}...)" for em in emails]) or "Nenhum e-mail não lido."
+        # Registra a mensagem do usuário no banco
+        user_msg = ChatMessage.objects.create(role='user', content=user_text)
 
-        # Prompt com capacidade de chamada de ações (Action Calling) e Memória Contínua
-        system_instruction = f"""Você é a Bella, uma assistente pessoal inteligente, jovem, carismática, alegre, empática e prestativa. Você fala de forma natural, moderna, doce e agradável, em português brasileiro. Seu tom é o de uma moça jovem, profissional e atenciosa.
+        executed_actions = []
+
+        # =========================================================================
+        # DEFINIÇÃO DE FERRAMENTAS (TOOLS / FUNCTION CALLING DO GEMINI)
+        # =========================================================================
+        def search_web_tool(query: str) -> str:
+            """Pesquisa na web e no Google Notícias em tempo real para obter informações atualizadas sobre fatos recentes, notícias de hoje, resultados de jogos, lançamentos ou cotações."""
+            results = WebSearchService.search_web(query, max_results=3)
+            executed_actions.append({"type": "web_search", "query": query})
+            if not results:
+                return f"Nenhum resultado recente encontrado na web para '{query}'."
+            formatted = []
+            for r in results:
+                formatted.append(f"Título: {r.get('title')}\nResumo: {r.get('snippet')}\nLink: {r.get('url')}")
+            return "\n---\n".join(formatted)
+
+        def add_calendar_event_tool(title: str, date_str: str = "hoje", time_str: str = "09:00", category: str = "work", is_important: bool = False, location: str = "") -> str:
+            """Agenda um novo compromisso ou reunião no calendário. date_str pode ser 'hoje', 'amanhã', dia da semana ou YYYY-MM-DD. time_str no formato 'HH:MM'."""
+            d = ChatAssistantService.parse_date_string(date_str, now.date())
+            h, m = ChatAssistantService.parse_time_string(time_str)
+            target_dt = timezone.make_aware(datetime.datetime.combine(d, datetime.time(h, m)))
+            ev = CalendarEvent.objects.create(
+                title=title.strip(),
+                start_time=target_dt,
+                category=category if category in ['work', 'personal', 'health', 'study', 'other'] else 'work',
+                is_important=bool(is_important),
+                location=location or ""
+            )
+            time_formatted = timezone.localtime(ev.start_time).strftime("%H:%M")
+            executed_actions.append({
+                "type": "event_created",
+                "event_id": ev.id,
+                "title": ev.title,
+                "time": time_formatted,
+                "date": d.strftime("%d/%m")
+            })
+            return f"Compromisso '{ev.title}' agendado com sucesso para {d.strftime('%d/%m/%Y')} às {time_formatted}."
+
+        def edit_calendar_event_tool(search_term: str, new_time: str = None, new_date_str: str = None, new_title: str = None) -> str:
+            """Edita ou remarca um compromisso existente no calendário. Localiza pelo nome (search_term) e atualiza o horário (new_time ex: '16:00'), nova data (new_date_str ex: 'amanhã') ou título (new_title)."""
+            ev = CalendarEvent.objects.filter(title__icontains=search_term).order_by('-start_time').first()
+            if not ev:
+                return f"Não encontrei nenhum compromisso na agenda contendo '{search_term}'."
+
+            current_dt = timezone.localtime(ev.start_time)
+            target_date = current_dt.date()
+            target_time = (current_dt.hour, current_dt.minute)
+
+            if new_date_str:
+                target_date = ChatAssistantService.parse_date_string(new_date_str, now.date())
+            if new_time:
+                target_time = ChatAssistantService.parse_time_string(new_time)
+
+            ev.start_time = timezone.make_aware(datetime.datetime.combine(target_date, datetime.time(*target_time)))
+            if new_title:
+                ev.title = new_title.strip()
+            ev.save()
+
+            formatted_dt = timezone.localtime(ev.start_time).strftime("%d/%m/%Y às %H:%M")
+            executed_actions.append({
+                "type": "event_updated",
+                "event_id": ev.id,
+                "title": ev.title,
+                "new_time": timezone.localtime(ev.start_time).strftime("%H:%M"),
+                "new_date": target_date.strftime("%d/%m")
+            })
+            return f"Compromisso '{ev.title}' remarcado para {formatted_dt} com sucesso!"
+
+        def delete_calendar_event_tool(search_term: str) -> str:
+            """Exclui ou cancela um compromisso da agenda localizado pelo nome ou palavra-chave."""
+            ev = CalendarEvent.objects.filter(title__icontains=search_term).order_by('-start_time').first()
+            if not ev:
+                return f"Não encontrei nenhum compromisso contendo '{search_term}' para excluir."
+            title = ev.title
+            ev.delete()
+            executed_actions.append({
+                "type": "event_deleted",
+                "title": title
+            })
+            return f"Compromisso '{title}' excluído da sua agenda."
+
+        def add_task_tool(title: str, priority: str = "medium", category: str = "work", due_date_str: str = "hoje") -> str:
+            """Cria uma nova tarefa ou afazer na lista de afazeres. priority pode ser 'low', 'medium' ou 'high'."""
+            d = ChatAssistantService.parse_date_string(due_date_str, now.date())
+            task = QuickTask.objects.create(
+                title=title.strip(),
+                priority=priority if priority in ['low', 'medium', 'high'] else 'medium',
+                category=category if category in ['work', 'personal', 'health', 'study', 'other'] else 'work',
+                due_date=d
+            )
+            executed_actions.append({
+                "type": "task_created",
+                "task_id": task.id,
+                "title": task.title,
+                "priority": task.priority
+            })
+            return f"Tarefa '{task.title}' criada com sucesso na lista de afazeres!"
+
+        def complete_task_tool(search_term: str) -> str:
+            """Marca uma tarefa existente como concluída ou finalizada na lista de afazeres, localizando-a pelo nome (search_term)."""
+            task = QuickTask.objects.filter(is_done=False, title__icontains=search_term).first()
+            if not task:
+                already_done = QuickTask.objects.filter(is_done=True, title__icontains=search_term).first()
+                if already_done:
+                    return f"A tarefa '{already_done.title}' já estava marcada como concluída."
+                return f"Não encontrei nenhuma tarefa pendente com o termo '{search_term}'."
+
+            task.is_done = True
+            task.completed_at = timezone.now()
+            task.save()
+            executed_actions.append({
+                "type": "task_completed",
+                "task_id": task.id,
+                "title": task.title
+            })
+            return f"Tarefa '{task.title}' marcada como concluída com sucesso! Parabéns!"
+
+        def delete_task_tool(search_term: str) -> str:
+            """Exclui ou remove uma tarefa da lista de afazeres pelo nome ou palavra-chave."""
+            task = QuickTask.objects.filter(title__icontains=search_term).first()
+            if not task:
+                return f"Não encontrei nenhuma tarefa contendo '{search_term}' para excluir."
+            title = task.title
+            task.delete()
+            executed_actions.append({
+                "type": "task_deleted",
+                "title": title
+            })
+            return f"Tarefa '{title}' removida da sua lista de afazeres."
+
+        def list_agenda_or_tasks_tool(item_type: str = "all", date_str: str = "hoje") -> str:
+            """Consulta e lista compromissos da agenda e/ou tarefas pendentes para hoje ou uma data específica (item_type: 'events', 'tasks' ou 'all')."""
+            d = ChatAssistantService.parse_date_string(date_str, now.date())
+            start_dt = timezone.make_aware(datetime.datetime.combine(d, datetime.time(0, 0, 0)))
+            end_dt = timezone.make_aware(datetime.datetime.combine(d, datetime.time(23, 59, 59)))
+
+            report = []
+            if item_type in ["events", "all"]:
+                events = list(CalendarEvent.objects.filter(start_time__gte=start_dt, start_time__lte=end_dt).order_by('start_time'))
+                if events:
+                    ev_list = [f"- {timezone.localtime(e.start_time).strftime('%H:%M')} - {e.title} ({e.get_category_display()})" for e in events]
+                    report.append(f"Compromissos para {d.strftime('%d/%m/%Y')}:\n" + "\n".join(ev_list))
+                else:
+                    report.append(f"Nenhum compromisso agendado para {d.strftime('%d/%m/%Y')}.")
+
+            if item_type in ["tasks", "all"]:
+                tasks = list(QuickTask.objects.filter(is_done=False).order_by('-priority', 'created_at')[:8])
+                if tasks:
+                    t_list = [f"- {t.title} (Prioridade: {t.get_priority_display()})" for t in tasks]
+                    report.append("Tarefas pendentes:\n" + "\n".join(t_list))
+                else:
+                    report.append("Nenhuma tarefa pendente na lista.")
+
+            return "\n\n".join(report)
+
+        tools_list = [
+            search_web_tool,
+            add_calendar_event_tool,
+            edit_calendar_event_tool,
+            delete_calendar_event_tool,
+            add_task_tool,
+            complete_task_tool,
+            delete_task_tool,
+            list_agenda_or_tasks_tool,
+        ]
+
+        # Contexto do sistema para o Gemini
+        system_instruction = f"""Você é a Bella, uma assistente pessoal inteligente, jovem, carismática, alegre, empática e prestativa. Você fala de forma natural, moderna, doce e agradável, em português brasileiro.
 Data/Hora atual no Brasil: {now.strftime('%d/%m/%Y %H:%M:%S (%A)')}.
 Cidade do usuário: {city}.
 Clima atual: {weather['condition']}, {weather['current_temp']}°C (Mín: {weather['temp_min']}°C, Máx: {weather['temp_max']}°C, Chuva: {weather['rain_prob']}%).
 Cotação Dólar (USD/BRL): Compra R$ {currency['bid']}, Venda R$ {currency['ask']}, Variação: {currency['variation']}.
 
-Compromissos agendados:
-{events_str}
-
-E-mails recentes:
-{emails_str}
-
-HISTÓRICO RECENTE DA CONVERSA (MEMÓRIA CONTEXTUAL):
-{history_str}
-
-INSTRUÇÃO DE CONTINUIDADE E MEMÓRIA:
-Você tem memória contínua das mensagens acima. Se o usuário fizer referência a algo dito anteriormente (por exemplo "ele", "ela", "aquilo", "o que você disse antes", "e amanhã?", "mude o horário para as 16h"), interprete a intenção conectando com o histórico anterior e responda de forma natural e precisa, sem reiniciar a conversa do zero.
-
-SUAS CAPACIDADES DE AÇÃO:
-Você pode executar ações para o usuário respondendo no formato JSON rígido quando o usuário solicitar adicionar ou consultar algo.
-Possíveis ações:
-1. "ADD_EVENT": Quando o usuário pedir para agendar/marcar compromisso ou reunião.
-   action_data: {{"title": "Título", "time": "HH:MM", "date_offset_days": 0, "category": "work|personal|health|study|other", "is_important": true/false}}
-   (date_offset_days: 0 para hoje, 1 para amanhã).
-2. "ADD_TASK": Quando o usuário pedir para criar, adicionar ou anotar uma tarefa ou afazer.
-   action_data: {{"title": "Título da Tarefa", "priority": "high|medium|low", "category": "work|personal|health|study|other"}}
-3. "ADD_EMAIL": Quando o usuário pedir para registrar um e-mail ou aviso importante.
-   action_data: {{"sender": "Nome", "subject": "Assunto", "snippet": "Trecho/Anotação", "is_important": true}}
-4. "NONE": Para respostas normais de conversa, conselhos, dúvidas de clima, cotação ou bate-papo.
-
-FORMATO OBRIGATÓRIO DE RESPOSTA JSON:
-{{
-  "action": "ADD_EVENT" | "ADD_TASK" | "ADD_EMAIL" | "NONE",
-  "action_data": {{ ... }} ou null,
-  "reply": "Sua resposta simpática, clara e em português para ser lida por voz no celular."
-}}
-Responda EXCLUSIVAMENTE o objeto JSON válido, sem crases extras ou markdown envolvente."""
+SUAS FERRAMENTAS E REGRAS:
+1. PESQUISA NA WEB: Sempre que o usuário perguntar sobre fatos recentes, notícias de hoje, resultados de jogos de futebol, tecnologia, filmes, eventos ou informações em tempo real, use a ferramenta 'search_web_tool'.
+2. TAREFAS:
+   - Para criar tarefa: use 'add_task_tool'.
+   - Para concluir/marcar como feita: use 'complete_task_tool'.
+   - Para excluir: use 'delete_task_tool'.
+3. AGENDA / COMPROMISSOS:
+   - Para agendar: use 'add_calendar_event_tool'.
+   - Para remarcar ou mudar horário/data: use 'edit_calendar_event_tool'.
+   - Para cancelar/excluir: use 'delete_calendar_event_tool'.
+   - Para consultar o que tem para fazer: use 'list_agenda_or_tasks_tool'.
+4. TOM DE RESPOSTA: Seja sempre acolhedora, clara e objetiva. Responda diretamente ao usuário em português brasileiro fluido para ser ouvido por voz."""
 
         reply_text = ""
-        action_type = "NONE"
-        action_details = {}
 
-        # 1. Tentativa via Google Gemini AI
+        # 1. Tentativa via Google Gemini AI com Function Calling Oficial
         if api_key and api_key.strip():
             try:
                 import google.generativeai as genai
                 genai.configure(api_key=api_key.strip())
-                model = genai.GenerativeModel("gemini-1.5-flash")
-                response = model.generate_content([system_instruction, f"Usuário: {user_text}"])
-                raw_txt = response.text.strip()
-                
-                # Limpa crases de json se houver
-                if raw_txt.startswith("```json"):
-                    raw_txt = raw_txt[7:]
-                if raw_txt.startswith("```"):
-                    raw_txt = raw_txt[3:]
-                if raw_txt.endswith("```"):
-                    raw_txt = raw_txt[:-3]
-                raw_txt = raw_txt.strip()
+                model = genai.GenerativeModel(
+                    "gemini-1.5-flash",
+                    system_instruction=system_instruction,
+                    tools=tools_list
+                )
 
-                parsed = json.loads(raw_txt)
-                action_type = parsed.get("action", "NONE")
-                action_details = parsed.get("action_data") or {}
-                reply_text = parsed.get("reply", "")
+                # Constrói histórico recente alternando user/model
+                recent_messages = list(ChatMessage.objects.order_by('-created_at')[:8])
+                recent_messages.reverse()
+                # Remove a última mensagem que acabamos de criar para não duplicar no send_message
+                if recent_messages and recent_messages[-1].id == user_msg.id:
+                    recent_messages.pop()
+
+                formatted_history = []
+                expected_role = "user"
+                for m in recent_messages:
+                    role = "user" if m.role == "user" else "model"
+                    if role == expected_role and m.content and m.content.strip():
+                        formatted_history.append({
+                            "role": role,
+                            "parts": [m.content.strip()]
+                        })
+                        expected_role = "model" if expected_role == "user" else "user"
+
+                # Histórico no Gemini deve terminar com 'model' para o próximo 'send_message' ser 'user'
+                if formatted_history and formatted_history[-1]["role"] == "user":
+                    formatted_history.pop()
+
+                chat = model.start_chat(history=formatted_history, enable_automatic_function_calling=True)
+                response = chat.send_message(user_text)
+                if response and response.text:
+                    reply_text = response.text.strip()
             except Exception as e:
-                print(f"Erro no processamento do Gemini Chat: {e}")
+                print(f"Erro no Gemini Function Calling: {e}")
 
-        # 2. Fallback Inteligente baseado em Regras & PNL (se não houver chave ou falha)
+        # 2. Fallback Inteligente Avançado com PNL e Ferramentas Locais (caso sem chave ou instabilidade)
         if not reply_text:
             lower = user_text.lower()
-            
-            # Reconhecimento de intenção de agendamento (ex: "adicione reunião às 15h")
-            if any(k in lower for k in ["adicione", "adicionar", "agende", "agendar", "marque", "marcar", "lembre-me"]):
-                # Tenta capturar horário (ex: "15h", "15:30", "15h30", "as 14")
-                time_match = re.search(r'(?:às|as|à|a)?\s*(\d{1,2})(?:[:h](\d{2})|h)?', lower)
-                hour = 9
-                minute = 0
-                if time_match:
-                    h_val = time_match.group(1)
-                    m_val = time_match.group(2)
-                    if h_val:
-                        hour = min(max(int(h_val), 0), 23)
-                    if m_val:
-                        minute = min(max(int(m_val), 0), 59)
-                
-                # Título limpo
-                clean_title = re.sub(r'^(?:por favor,?\s*)?(?:adicione|agende|marque|coloque na agenda)\s*', '', user_text, flags=re.IGNORECASE)
-                clean_title = clean_title.strip() or "Novo compromisso"
 
-                action_type = "ADD_EVENT"
-                action_details = {
-                    "title": clean_title,
-                    "time": f"{hour:02d}:{minute:02d}",
-                    "date_offset_days": 1 if "amanhã" in lower else 0,
-                    "category": "health" if any(w in lower for w in ["treino", "academia", "médico", "dentista", "caminhada"]) else "work",
-                    "is_important": any(w in lower for w in ["urgente", "importante", "prioridade"])
-                }
-                day_label = "amanhã" if action_details["date_offset_days"] == 1 else "hoje"
-                reply_text = f"Prontinho! Já anotei '{clean_title}' na sua agenda para {day_label} às {hour:02d}:{minute:02d}!"
-            
-            elif any(k in lower for k in ["clima", "tempo", "chov", "temperatura", "chuva", "calor", "frio"]):
+            # A. Pesquisa na Web (Ex: "quem ganhou o jogo", "últimas notícias", "pesquise na web", "resultado de")
+            if any(k in lower for k in ["quem ganhou", "resultado do", "resultado de", "lançamento", "pesquise", "procure na web", "procure na internet", "notícias sobre", "noticias sobre", "notícia sobre"]):
+                clean_query = re.sub(r'^(?:por favor,?\s*)?(?:bella,?\s*)?(?:pesquise|procure|busque|veja|me diga|qual o|quem)\s*(?:na web|na internet|sobre)?\s*', '', user_text, flags=re.IGNORECASE).strip() or user_text
+                search_res = search_web_tool(clean_query)
+                results_list = WebSearchService.search_web(clean_query, max_results=2)
+                if results_list:
+                    top = results_list[0]
+                    reply_text = f"Pesquisei na web sobre '{clean_query}': Segundo {top.get('title')}, {top.get('snippet')[:220]}."
+                else:
+                    reply_text = f"Pesquisei na internet por '{clean_query}', mas não encontrei novidades recentes agora."
+
+            # B. Concluir Tarefa (Ex: "conclui a tarefa do café", "marca como feita a tarefa X")
+            elif any(k in lower for k in ["conclui", "conclua", "concluir", "finaliza", "finalizar", "marca como feita", "marcar como feita", "marca como concluída", "feito o", "feita a"]) and any(w in lower for w in ["tarefa", "afazer", "café", "mercado", "relatório", "reunião", "comprar", "estudo", "pagar"]):
+                target = re.sub(r'^(?:por favor,?\s*)?(?:bella,?\s*)?(?:conclui|conclua|concluir|finaliza|finalizar|marca como feita|marca como concluída)\s*(?:a\s*tarefa\s*(?:de|do|da)?)?\s*', '', user_text, flags=re.IGNORECASE).strip()
+                target = target.replace("a tarefa", "").replace("o afazer", "").strip() or "tarefa"
+                reply_text = complete_task_tool(target)
+
+            # C. Remarcar / Editar Compromisso (Ex: "mude minha reunião das 15h para as 16h", "remarque o dentista para amanhã às 10h")
+            elif any(k in lower for k in ["mude", "mudar", "remarque", "remarcar", "altere", "alterar", "troque", "trocar", "passe"]) and any(w in lower for w in ["reunião", "reuniao", "compromisso", "dentista", "médico", "treino", "almoço", "horário", "horario"]):
+                # Tenta capturar novo horário ("para as 16h", "para 16:00", "às 14h")
+                new_time_match = re.search(r'(?:para|p/)?\s*(?:às|as|à|a)?\s*(\d{1,2})(?:[:h](\d{2})|h)?', lower)
+                new_time_str = "09:00"
+                if new_time_match:
+                    nh = int(new_time_match.group(1))
+                    nm = int(new_time_match.group(2)) if new_time_match.group(2) else 0
+                    new_time_str = f"{nh:02d}:{nm:02d}"
+
+                new_date = "amanhã" if "amanhã" in lower else None
+                # Termo de busca
+                term_match = re.search(r'(?:minha|o|a)?\s*(reunião|reuniao|compromisso|dentista|médico|treino|almoço|pauta)\b', lower)
+                target_term = term_match.group(1) if term_match else "reunião"
+                reply_text = edit_calendar_event_tool(search_term=target_term, new_time=new_time_str, new_date_str=new_date)
+
+            # D. Excluir Tarefa ou Compromisso (Ex: "apague a tarefa X", "exclua o compromisso Y")
+            elif any(k in lower for k in ["apague", "apagar", "exclua", "excluir", "delete", "deletar", "remova", "remover"]):
+                if "tarefa" in lower:
+                    target = re.sub(r'^(?:por favor,?\s*)?(?:bella,?\s*)?(?:apague|exclua|delete|remova)\s*(?:a\s*tarefa\s*(?:de|do|da)?)?\s*', '', user_text, flags=re.IGNORECASE).strip() or "tarefa"
+                    reply_text = delete_task_tool(target)
+                else:
+                    target = re.sub(r'^(?:por favor,?\s*)?(?:bella,?\s*)?(?:apague|exclua|delete|remova)\s*(?:o\s*compromisso\s*(?:de|do|da)?|a\s*reunião\s*(?:de|do|da)?)?\s*', '', user_text, flags=re.IGNORECASE).strip() or "compromisso"
+                    reply_text = delete_calendar_event_tool(target)
+
+            # E. Adicionar Compromisso
+            elif any(k in lower for k in ["adicione", "adicionar", "agende", "agendar", "marque", "marcar", "coloque na agenda"]):
+                time_tuple = ChatAssistantService.parse_time_string(lower)
+                time_str = f"{time_tuple[0]:02d}:{time_tuple[1]:02d}"
+                date_str = "amanhã" if "amanhã" in lower else "hoje"
+                clean_title = re.sub(r'^(?:por favor,?\s*)?(?:bella,?\s*)?(?:adicione|agende|marque|coloque na agenda)\s*', '', user_text, flags=re.IGNORECASE).strip() or "Novo compromisso"
+                cat = "health" if any(w in lower for w in ["treino", "academia", "médico", "dentista", "caminhada"]) else "work"
+                is_prio = any(w in lower for w in ["urgente", "importante", "prioridade"])
+                reply_text = add_calendar_event_tool(title=clean_title, date_str=date_str, time_str=time_str, category=cat, is_important=is_prio)
+
+            # F. Adicionar Tarefa
+            elif any(k in lower for k in ["tarefa", "afazer", "anote", "lembrete"]) and any(k in lower for k in ["crie", "criar", "adicione", "adicionar", "coloque", "anote"]):
+                clean_title = re.sub(r'^(?:por favor,?\s*)?(?:bella,?\s*)?(?:adicione|adicionar|crie|criar|coloque|anote)\s*(?:uma\s*)?(?:tarefa|afazer|lembrete)?\s*(?:de|para)?\s*', '', user_text, flags=re.IGNORECASE).strip() or "Nova tarefa"
+                prio = "high" if any(w in lower for w in ["urgente", "alta", "prioridade"]) else "medium"
+                reply_text = add_task_tool(title=clean_title, priority=prio)
+
+            # G. Consultar Agenda / Tarefas
+            elif any(k in lower for k in ["agenda", "o que tenho", "compromissos", "quais tarefas", "o que fazer"]):
+                target_date = "amanhã" if "amanhã" in lower else "hoje"
+                reply_text = list_agenda_or_tasks_tool(item_type="all", date_str=target_date)
+
+            # H. Clima
+            elif any(k in lower for k in ["clima", "tempo", "chover", "chuva", "temperatura", "calor", "frio"]):
                 reply_text = f"Em {city}, a previsão para hoje é de tempo {weather['condition'].lower()}, com temperatura atual de {weather['current_temp']}°C. A máxima chega a {weather['temp_max']}°C e a chance de chuva é de {weather['rain_prob']}%."
-            
+
+            # I. Cotação
             elif any(k in lower for k in ["dólar", "dolar", "cotação", "cotacao", "câmbio", "cambio"]):
                 reply_text = f"O Dólar comercial está cotado a R$ {currency['bid']} para compra e R$ {currency['ask']} para venda, com variação de {currency['variation']}."
-            
-            elif any(k in lower for k in ["tarefa", "afazer", "anote", "lembrete"]):
-                clean_title = re.sub(r'^(?:por favor,?\s*)?(?:adicione|adicionar|crie|criar|coloque|anote)\s*(?:uma\s*)?(?:tarefa|afazer|lembrete)?\s*(?:de|para)?\s*', '', user_text, flags=re.IGNORECASE).strip() or "Nova tarefa"
-                prio = "high" if any(w in lower for w in ["urgente", "alta", "prioridade"]) else "medium"
-                action_type = "ADD_TASK"
-                action_details = {
-                    "title": clean_title,
-                    "priority": prio,
-                    "category": "personal" if any(w in lower for w in ["casa", "mercado", "comprar", "pessoal"]) else "work"
-                }
-                reply_text = f"Com certeza! Já criei a tarefa '{clean_title}' na sua lista de afazeres!"
 
-            elif any(k in lower for k in ["agenda", "compromisso", "o que tenho", "reunião"]):
-                if events:
-                    ev_items = ", ".join([f"{timezone.localtime(e.start_time).strftime('%H:%M')} - {e.title}" for e in events[:3]])
-                    reply_text = f"Seus próximos compromissos são: {ev_items}."
-                else:
-                    reply_text = "Você está com o dia totalmente livre, sem nenhum compromisso agendado!"
-            
             else:
-                reply_text = f"Oi! Eu sou a Bella, sua assistente pessoal! Posso agendar seus compromissos, ver o clima para {city}, acompanhar moedas ou anotar tarefas para você. Como posso te ajudar agora?"
+                reply_text = f"Oi! Eu sou a Bella, sua assistente pessoal! Posso pesquisar notícias na web, agendar ou remarcar compromissos, criar e concluir tarefas para você. Como posso te ajudar agora?"
 
-        # 3. Execução da Ação no Banco de Dados
-        executed_action_log = None
-        if action_type == "ADD_EVENT" and action_details:
-            try:
-                days_offset = int(action_details.get("date_offset_days", 0))
-                target_date = now.date() + datetime.timedelta(days=days_offset)
-                time_str = action_details.get("time", "09:00")
-                if ":" in time_str:
-                    h, m = map(int, time_str.split(":")[:2])
-                else:
-                    h, m = 9, 0
-                
-                target_dt = timezone.make_aware(datetime.datetime.combine(target_date, datetime.time(h, m)))
-                
-                new_event = CalendarEvent.objects.create(
-                    title=action_details.get("title", "Novo Compromisso"),
-                    start_time=target_dt,
-                    category=action_details.get("category", "work"),
-                    is_important=bool(action_details.get("is_important", False))
-                )
-                executed_action_log = {
-                    "type": "event_created",
-                    "event_id": new_event.id,
-                    "title": new_event.title,
-                    "time": timezone.localtime(new_event.start_time).strftime("%H:%M")
-                }
-            except Exception as err:
-                print(f"Erro ao salvar evento criado pelo chat: {err}")
+        # Determina a ação primária executada para retornar ao frontend
+        primary_action = executed_actions[-1] if executed_actions else None
+        action_type = primary_action.get("type", "NONE") if primary_action else "NONE"
 
-        elif action_type == "ADD_EMAIL" and action_details:
-            try:
-                new_email = EmailHighlight.objects.create(
-                    sender=action_details.get("sender", "Remetente"),
-                    subject=action_details.get("subject", "Assunto"),
-                    snippet=action_details.get("snippet", ""),
-                    is_important=bool(action_details.get("is_important", True)),
-                    received_at=now
-                )
-                executed_action_log = {
-                    "type": "email_created",
-                    "email_id": new_email.id,
-                    "subject": new_email.subject
-                }
-            except Exception as err:
-                print(f"Erro ao salvar e-mail criado pelo chat: {err}")
-
-        elif action_type == "ADD_TASK" and action_details:
-            try:
-                new_task = QuickTask.objects.create(
-                    title=action_details.get("title", "Nova Tarefa"),
-                    priority=action_details.get("priority", "medium"),
-                    category=action_details.get("category", "work"),
-                    due_date=now.date()
-                )
-                executed_action_log = {
-                    "type": "task_created",
-                    "task_id": new_task.id,
-                    "title": new_task.title,
-                    "priority": new_task.priority
-                }
-            except Exception as err:
-                print(f"Erro ao salvar tarefa criada pelo chat: {err}")
-
-        # Salva resposta do assistente
+        # Salva resposta do assistente no banco
         assistant_msg = ChatMessage.objects.create(
             role='assistant',
             content=reply_text,
             action_type=action_type,
-            action_details=json.dumps(executed_action_log or action_details)
+            action_details=json.dumps(primary_action or {})
         )
 
         return {
             "reply": reply_text,
             "action_type": action_type,
-            "action_executed": executed_action_log,
+            "action_executed": primary_action,
+            "all_actions": executed_actions,
             "message_id": assistant_msg.id,
             "created_at": assistant_msg.created_at.strftime("%H:%M")
         }

@@ -549,46 +549,6 @@ def api_task_detail(request, task_id):
 
 
 
-@csrf_exempt
-def api_test_telegram(request):
-    """POST /api/notifications/telegram/test/ - Testa as credenciais do Telegram"""
-    if request.method == "POST":
-        try:
-            body = parse_json_body(request)
-            token = body.get("bot_token")
-            chat_id = body.get("chat_id")
-            
-            if not token or not chat_id:
-                pref = UserPreference.objects.first()
-                token = token or (pref.telegram_bot_token if pref else None)
-                chat_id = chat_id or (pref.telegram_chat_id if pref else None)
-                
-            result = NotificationService.test_telegram_connection(token, chat_id)
-            return JsonResponse(result)
-        except Exception as e:
-            return JsonResponse({"success": False, "error": str(e)}, status=400)
-    return JsonResponse({"error": "Método não permitido"}, status=405)
-
-
-def api_whatsapp_share_text(request):
-    """GET /api/notifications/whatsapp/text/ - Retorna texto formatado para compartilhar no WhatsApp"""
-    data = BriefingOrchestrator.get_today_briefing()
-    pref = UserPreference.objects.first()
-    phone = pref.whatsapp_number if pref and pref.whatsapp_number else ""
-    
-    text = NotificationService.format_whatsapp_share_text(data)
-    import urllib.parse
-    encoded_text = urllib.parse.quote(text)
-    
-    # Se houver número configurado, direciona para o número específico, senão abre o seletor geral
-    if phone:
-        clean_phone = "".join(filter(str.isdigit, phone))
-        url = f"https://api.whatsapp.com/send?phone={clean_phone}&text={encoded_text}"
-    else:
-        url = f"https://api.whatsapp.com/send?text={encoded_text}"
-        
-    return JsonResponse({"url": url, "text": text})
-
 
 # =========================================================================
 # BANCO DE DADOS NA NUVEM (SUPABASE / POSTGRESQL / FIREBASE)
