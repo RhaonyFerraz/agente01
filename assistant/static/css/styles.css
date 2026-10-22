@@ -2609,3 +2609,283 @@ select.input-text option { background: #0f0a20; color: #fff; }
   0%, 100% { opacity: 1; }
   50% { opacity: 0; }
 }
+
+/* ==========================================================================
+   ORBE GEMINI — Animação de IA Falando (estilo Google Gemini)
+========================================================================== */
+
+/* — Overlay backdrop — */
+.bella-speaking-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 28px;
+  background: radial-gradient(ellipse at center,
+    rgba(6, 4, 24, 0.88) 0%,
+    rgba(4, 2, 18, 0.96) 100%);
+  backdrop-filter: blur(18px) saturate(160%);
+  -webkit-backdrop-filter: blur(18px) saturate(160%);
+  cursor: pointer;
+  /* entrada */
+  opacity: 0;
+  transition: opacity 0.35s cubic-bezier(0.4,0,0.2,1);
+  pointer-events: none;
+}
+
+.bella-speaking-overlay.speaking {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* ocultar sem quebrar transição */
+.bella-speaking-overlay.hidden {
+  display: none !important;
+}
+
+/* — Contentor do orbe — */
+.gemini-orb-container {
+  position: relative;
+  width: 220px;
+  height: 220px;
+  filter: drop-shadow(0 0 60px rgba(99, 102, 241, 0.5))
+          drop-shadow(0 0 120px rgba(168, 85, 247, 0.3));
+}
+
+/* — Blobs fluidos (camadas de cor que se morfam) — */
+.gemini-orb-blob {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  mix-blend-mode: screen;
+  animation-timing-function: ease-in-out;
+  animation-iteration-count: infinite;
+  animation-direction: alternate;
+}
+
+.blob-1 {
+  background: conic-gradient(
+    from 0deg,
+    #6366f1, #8b5cf6, #a855f7, #ec4899, #6366f1
+  );
+  animation: blobRotate1 4s linear infinite, blobMorph1 3.5s ease-in-out infinite alternate;
+  opacity: 0.9;
+}
+.blob-2 {
+  background: conic-gradient(
+    from 180deg,
+    #06b6d4, #3b82f6, #6366f1, #8b5cf6, #06b6d4
+  );
+  animation: blobRotate2 5.5s linear infinite reverse, blobMorph2 4s ease-in-out infinite alternate;
+  opacity: 0.75;
+  transform: scale(0.82);
+}
+.blob-3 {
+  background: conic-gradient(
+    from 90deg,
+    #10b981, #06b6d4, #3b82f6, #a855f7, #10b981
+  );
+  animation: blobRotate3 7s linear infinite, blobMorph3 5s ease-in-out infinite alternate;
+  opacity: 0.6;
+  transform: scale(0.65);
+}
+.blob-4 {
+  background: conic-gradient(
+    from 270deg,
+    #f59e0b, #ec4899, #8b5cf6, #06b6d4, #f59e0b
+  );
+  animation: blobRotate4 3s linear infinite reverse, blobMorph4 2.8s ease-in-out infinite alternate;
+  opacity: 0.45;
+  transform: scale(0.42);
+}
+
+/* rotação contínua dos gradientes */
+@keyframes blobRotate1 {
+  to { transform: rotate(360deg); }
+}
+@keyframes blobRotate2 {
+  to { transform: scale(0.82) rotate(360deg); }
+}
+@keyframes blobRotate3 {
+  to { transform: scale(0.65) rotate(360deg); }
+}
+@keyframes blobRotate4 {
+  to { transform: scale(0.42) rotate(360deg); }
+}
+
+/* morphing orgânico de border-radius */
+@keyframes blobMorph1 {
+  0%   { border-radius: 60% 40% 70% 30% / 55% 45% 55% 45%; }
+  33%  { border-radius: 40% 60% 30% 70% / 65% 35% 65% 35%; }
+  66%  { border-radius: 70% 30% 50% 50% / 40% 60% 40% 60%; }
+  100% { border-radius: 50% 50% 60% 40% / 50% 60% 40% 50%; }
+}
+@keyframes blobMorph2 {
+  0%   { border-radius: 55% 45% 65% 35% / 45% 55% 45% 55%; }
+  50%  { border-radius: 35% 65% 45% 55% / 60% 40% 60% 40%; }
+  100% { border-radius: 65% 35% 55% 45% / 55% 45% 55% 45%; }
+}
+@keyframes blobMorph3 {
+  0%   { border-radius: 70% 30% 60% 40% / 50% 60% 40% 50%; }
+  50%  { border-radius: 40% 60% 40% 60% / 70% 30% 70% 30%; }
+  100% { border-radius: 55% 45% 70% 30% / 40% 60% 40% 60%; }
+}
+@keyframes blobMorph4 {
+  0%   { border-radius: 45% 55% 50% 50% / 60% 40% 60% 40%; }
+  50%  { border-radius: 60% 40% 65% 35% / 45% 55% 45% 55%; }
+  100% { border-radius: 50% 50% 45% 55% / 55% 45% 65% 35%; }
+}
+
+/* — Anéis de glow externos — */
+.gemini-glow-ring {
+  position: absolute;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  animation: ringPulse 2.4s ease-in-out infinite;
+}
+.ring-outer {
+  inset: -28px;
+  border-color: rgba(99, 102, 241, 0.25);
+  animation-delay: 0s;
+  box-shadow: 0 0 40px rgba(99, 102, 241, 0.2),
+              inset 0 0 40px rgba(99, 102, 241, 0.1);
+}
+.ring-mid {
+  inset: -14px;
+  border-color: rgba(168, 85, 247, 0.35);
+  animation-delay: 0.6s;
+  box-shadow: 0 0 25px rgba(168, 85, 247, 0.25),
+              inset 0 0 25px rgba(168, 85, 247, 0.1);
+}
+@keyframes ringPulse {
+  0%, 100% { opacity: 0.4; transform: scale(1); }
+  50%       { opacity: 1;   transform: scale(1.05); }
+}
+
+/* — Núcleo central luminoso — */
+.gemini-orb-core {
+  position: absolute;
+  inset: 50%;
+  transform: translate(-50%, -50%);
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 40% 35%,
+    #ffffff 0%,
+    #e0e7ff 30%,
+    rgba(99,102,241,0.4) 70%,
+    transparent 100%
+  );
+  box-shadow: 0 0 24px 8px rgba(255,255,255,0.35),
+              0 0 60px 16px rgba(99,102,241,0.4);
+  animation: corePulse 1.8s ease-in-out infinite alternate;
+  overflow: hidden;
+}
+.gemini-core-shimmer {
+  position: absolute;
+  width: 200%;
+  height: 200%;
+  top: -50%;
+  left: -60%;
+  background: linear-gradient(
+    120deg,
+    transparent 30%,
+    rgba(255,255,255,0.6) 50%,
+    transparent 70%
+  );
+  animation: shimmerPass 2.6s ease-in-out infinite;
+}
+@keyframes corePulse {
+  0%   { transform: translate(-50%,-50%) scale(0.88); opacity: 0.85; }
+  100% { transform: translate(-50%,-50%) scale(1.12); opacity: 1; }
+}
+@keyframes shimmerPass {
+  0%   { transform: translateX(-40%) rotate(30deg); opacity: 0; }
+  40%  { opacity: 1; }
+  100% { transform: translateX(140%) rotate(30deg); opacity: 0; }
+}
+
+/* — Partículas flutuantes — */
+.gemini-particle {
+  position: absolute;
+  border-radius: 50%;
+  pointer-events: none;
+}
+.p1 { width:8px;  height:8px;  background:#a855f7; top:8%;  left:20%; animation: floatParticle 3.2s ease-in-out infinite; }
+.p2 { width:6px;  height:6px;  background:#06b6d4; top:15%; right:18%; animation: floatParticle 4s   ease-in-out infinite 0.5s; }
+.p3 { width:10px; height:10px; background:#6366f1; bottom:12%; left:15%; animation: floatParticle 3.8s ease-in-out infinite 1s; }
+.p4 { width:5px;  height:5px;  background:#ec4899; bottom:10%; right:22%; animation: floatParticle 4.4s ease-in-out infinite 1.5s; }
+.p5 { width:7px;  height:7px;  background:#10b981; top:50%;  left:5%;  animation: floatParticle 3s   ease-in-out infinite 0.8s; }
+.p6 { width:6px;  height:6px;  background:#f59e0b; top:40%;  right:5%; animation: floatParticle 5s   ease-in-out infinite 2s; }
+
+@keyframes floatParticle {
+  0%, 100% { transform: translateY(0) scale(1);    opacity: 0.7; }
+  30%       { transform: translateY(-18px) scale(1.3); opacity: 1; }
+  70%       { transform: translateY(8px) scale(0.8);   opacity: 0.5; }
+}
+
+/* — Ondas de áudio / equalizador — */
+.gemini-audio-waves {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  height: 48px;
+}
+.gemini-audio-waves span {
+  display: block;
+  width: 4px;
+  border-radius: 2px;
+  background: linear-gradient(180deg, #a855f7, #6366f1, #06b6d4);
+  animation: audioBar 1.1s ease-in-out infinite alternate;
+  box-shadow: 0 0 8px rgba(168, 85, 247, 0.6);
+}
+.gemini-audio-waves span:nth-child(1)  { height: 12px; animation-delay: 0s;     }
+.gemini-audio-waves span:nth-child(2)  { height: 28px; animation-delay: 0.12s;  }
+.gemini-audio-waves span:nth-child(3)  { height: 44px; animation-delay: 0.24s;  }
+.gemini-audio-waves span:nth-child(4)  { height: 32px; animation-delay: 0.36s;  }
+.gemini-audio-waves span:nth-child(5)  { height: 20px; animation-delay: 0.08s;  }
+.gemini-audio-waves span:nth-child(6)  { height: 38px; animation-delay: 0.2s;   }
+.gemini-audio-waves span:nth-child(7)  { height: 24px; animation-delay: 0.32s;  }
+.gemini-audio-waves span:nth-child(8)  { height: 16px; animation-delay: 0.44s;  }
+.gemini-audio-waves span:nth-child(9)  { height: 34px; animation-delay: 0.16s;  }
+
+@keyframes audioBar {
+  0%   { transform: scaleY(0.3); opacity: 0.5; }
+  100% { transform: scaleY(1);   opacity: 1; }
+}
+
+/* — Labels de status — */
+.gemini-speaking-label {
+  font-family: 'Outfit', 'Inter', sans-serif;
+  font-size: 1.15rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: #f1f5f9;
+  margin: 0;
+  animation: labelFade 2s ease-in-out infinite alternate;
+  background: linear-gradient(90deg, #a855f7, #6366f1, #06b6d4);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  background-size: 200%;
+  animation: labelShine 2.5s linear infinite;
+}
+.gemini-speaking-hint {
+  font-size: 0.72rem;
+  color: rgba(148, 163, 184, 0.6);
+  margin: -16px 0 0;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+@keyframes labelFade {
+  0%, 100% { opacity: 0.8; }
+  50%       { opacity: 1; }
+}
+@keyframes labelShine {
+  0%   { background-position: 0% center; }
+  100% { background-position: 200% center; }
+}

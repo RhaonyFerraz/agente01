@@ -492,12 +492,36 @@ class PersonalAssistantApp {
       window.speechSynthesis.cancel();
     }
     this.stopVisualizerLoop();
+    this.hideGeminiOrb();
   }
 
   updateVoiceIcon(isPlaying) {
     const btn = document.getElementById('btn-voice-read');
     if (!btn) return;
     btn.style.background = isPlaying ? 'var(--accent)' : '';
+  }
+
+  /* =========================================================================
+     ORBE GEMINI — Animação de IA Falando
+  ========================================================================= */
+  showGeminiOrb() {
+    const overlay = document.getElementById('bella-speaking-overlay');
+    if (!overlay) return;
+    overlay.classList.remove('hidden');
+    // pequeno rAF para garantir a transição de opacidade
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => overlay.classList.add('speaking'));
+    });
+  }
+
+  hideGeminiOrb() {
+    const overlay = document.getElementById('bella-speaking-overlay');
+    if (!overlay) return;
+    overlay.classList.remove('speaking');
+    // aguarda a transição antes de esconder
+    overlay.addEventListener('transitionend', () => {
+      overlay.classList.add('hidden');
+    }, { once: true });
   }
 
   /* =========================================================================
@@ -2599,11 +2623,13 @@ class PersonalAssistantApp {
 
           audio.onplay = () => {
             this.connectAudioElementToVisualizer(audio);
+            this.showGeminiOrb();
             if (options.onStart) options.onStart();
           };
 
           audio.onended = () => {
             this.stopVisualizerLoop();
+            this.hideGeminiOrb();
             URL.revokeObjectURL(audioUrl);
             this.currentAudioPlayer = null;
             if (onComplete) onComplete();
@@ -2612,6 +2638,7 @@ class PersonalAssistantApp {
           audio.onerror = (err) => {
             console.warn('Erro na reprodução neural, usando fallback nativo:', err);
             this.stopVisualizerLoop();
+            this.hideGeminiOrb();
             URL.revokeObjectURL(audioUrl);
             this.currentAudioPlayer = null;
             this.fallbackBrowserSpeech(clean, options, onComplete);
@@ -2639,17 +2666,20 @@ class PersonalAssistantApp {
     this.configureBellaUtterance(utterance);
 
     utterance.onstart = () => {
+      this.showGeminiOrb();
       if (options.onStart) options.onStart();
     };
 
     utterance.onend = () => {
       this.stopVisualizerLoop();
+      this.hideGeminiOrb();
       if (onComplete) onComplete();
     };
 
     utterance.onerror = (e) => {
       console.warn('Erro síntese nativa:', e);
       this.stopVisualizerLoop();
+      this.hideGeminiOrb();
       if (onComplete) onComplete();
     };
 

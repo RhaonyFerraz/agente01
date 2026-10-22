@@ -20,7 +20,7 @@
   <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
 
   <!-- Estilos Principais -->
-  <link rel="stylesheet" href="/static/css/styles.css?v=9">
+  <link rel="stylesheet" href="/static/css/styles.css?v=10">
   
   <style id="dynamic-theme-vars">
     :root {
@@ -81,6 +81,42 @@
         </button>
       </div>
     </header>
+
+    <!-- =====================================================================
+         ORBE GEMINI - Animação de IA Falando (aparece quando Bella fala)
+    ====================================================================== -->
+    <div id="bella-speaking-overlay" class="bella-speaking-overlay hidden" onclick="app.stopAllAudio()">
+      <div class="gemini-orb-container">
+        <!-- Camadas do orbe fluido -->
+        <div class="gemini-orb-blob blob-1"></div>
+        <div class="gemini-orb-blob blob-2"></div>
+        <div class="gemini-orb-blob blob-3"></div>
+        <div class="gemini-orb-blob blob-4"></div>
+        <!-- Glow externo pulsante -->
+        <div class="gemini-glow-ring ring-outer"></div>
+        <div class="gemini-glow-ring ring-mid"></div>
+        <!-- Núcleo central -->
+        <div class="gemini-orb-core">
+          <div class="gemini-core-shimmer"></div>
+        </div>
+        <!-- Partículas flutuantes -->
+        <div class="gemini-particle p1"></div>
+        <div class="gemini-particle p2"></div>
+        <div class="gemini-particle p3"></div>
+        <div class="gemini-particle p4"></div>
+        <div class="gemini-particle p5"></div>
+        <div class="gemini-particle p6"></div>
+      </div>
+      <!-- Ondas de áudio -->
+      <div class="gemini-audio-waves">
+        <span></span><span></span><span></span><span></span>
+        <span></span><span></span><span></span><span></span>
+        <span></span>
+      </div>
+      <!-- Label de status -->
+      <p class="gemini-speaking-label">Bella está falando…</p>
+      <p class="gemini-speaking-hint">Toque para interromper</p>
+    </div>
 
     <!-- Banner PWA Install (se suportado) -->
     <div id="pwa-install-banner" class="install-banner hidden">
