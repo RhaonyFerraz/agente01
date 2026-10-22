@@ -22,9 +22,10 @@ urlpatterns = [
     # REST API - Configurações
     path('api/settings/', views.api_settings_view, name='api_settings'),
     
-    # REST API - Chat IA
+    # REST API - Chat IA (com suporte a Streaming SSE)
     path('api/chat/messages/', views.api_chat_messages, name='api_chat_messages'),
     path('api/chat/send/', views.api_chat_send, name='api_chat_send'),
+    path('api/chat/stream/', views.api_chat_stream, name='api_chat_stream'),
     
     # REST API - Notificações
     path('api/notifications/telegram/send/', views.api_send_telegram, name='api_send_telegram'),
@@ -43,7 +44,14 @@ urlpatterns = [
     path('api/cloud-db/save/', views.api_cloud_db_save, name='api_cloud_db_save'),
     path('api/cloud-db/export/', views.api_cloud_db_export, name='api_cloud_db_export'),
     path('api/cloud-db/import/', views.api_cloud_db_import, name='api_cloud_db_import'),
+    path('api/cloud-db/sync/', views.api_cloud_db_sync, name='api_cloud_db_sync'),
 
-    # REST API - Síntese Vocal Neural (Edge-TTS)
+    # REST API - Backup Automático e Envio via Telegram
+    path('api/backup/run/', views.api_backup_run, name='api_backup_run'),
+    path('api/backup/telegram/', views.api_backup_telegram, name='api_backup_telegram'),
+    path('api/backup/check-auto/', views.api_backup_check_auto, name='api_backup_check_auto'),
+
+    # REST API - Síntese Vocal Neural (Edge-TTS) e Memorando Rápido
     path('api/voice/tts/', views.api_voice_tts, name='api_voice_tts'),
+    path('api/voice/memo/', views.api_voice_memo, name='api_voice_memo'),
 ]

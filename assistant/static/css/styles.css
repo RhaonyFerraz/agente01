@@ -2357,5 +2357,255 @@ select.input-text option { background: #0f0a20; color: #fff; }
 }
 
 /* =========================================================================
-   END v8.0
+   VOICE EXPERIENCES: MEMORANDO DE VOZ, BARGE-IN & STREAMING (v10)
 ========================================================================= */
+
+/* 1. Botão de Memorando no Header */
+.btn-voice-memo {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.2), rgba(239, 68, 68, 0.15));
+  border: 1px solid rgba(245, 158, 11, 0.4);
+  border-radius: var(--radius-full);
+  color: #fbbf24;
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 5px 12px;
+  cursor: pointer;
+  transition: all 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+  box-shadow: 0 0 12px rgba(245, 158, 11, 0.2);
+}
+
+.btn-voice-memo:hover {
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.35), rgba(239, 68, 68, 0.25));
+  border-color: rgba(245, 158, 11, 0.7);
+  box-shadow: 0 0 18px rgba(245, 158, 11, 0.45);
+  transform: translateY(-2px);
+}
+
+.memo-mic-icon {
+  font-size: 0.85rem;
+  animation: pulseAmber 2s infinite;
+}
+
+@keyframes pulseAmber {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.2); opacity: 0.8; }
+}
+
+/* 2. Dica de Interrupção por Voz (Barge-In) */
+.voice-bargein-tip {
+  font-size: 0.73rem;
+  color: #e2e8f0;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: var(--radius-full);
+  padding: 4px 14px;
+  text-align: center;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  animation: fadeIn 0.4s ease;
+}
+
+.voice-bargein-tip strong {
+  color: #fbbf24;
+}
+
+.voice-bargein-tip em {
+  color: #f43f8a;
+  font-style: normal;
+  font-weight: 700;
+}
+
+/* 3. Modal do Memorando de Voz Rápido */
+.voice-memo-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1060;
+  background: rgba(4, 5, 16, 0.88);
+  backdrop-filter: blur(20px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+  animation: fadeInBackdrop 0.25s ease forwards;
+}
+
+.voice-memo-modal {
+  width: 100%;
+  max-width: 440px;
+  background: linear-gradient(160deg, rgba(28, 18, 48, 0.98), rgba(16, 8, 32, 0.99));
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  border-radius: var(--radius-xl);
+  padding: 24px;
+  box-shadow: 0 25px 70px rgba(0, 0, 0, 0.85), 0 0 40px rgba(245, 158, 11, 0.2);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  animation: modalScaleUp 0.32s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.voice-memo-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  padding-bottom: 12px;
+}
+
+.voice-memo-title {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 1.02rem;
+  font-weight: 800;
+  color: #f8fafc;
+}
+
+.voice-memo-hint {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  line-height: 1.45;
+  text-align: center;
+  margin-bottom: 6px;
+}
+
+.memo-recorder-stage {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 16px 0;
+  position: relative;
+}
+
+.memo-ring {
+  position: absolute;
+  width: 110px;
+  height: 110px;
+  border-radius: 50%;
+  border: 2px dashed rgba(245, 158, 11, 0.4);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+.memo-recorder-stage.recording .memo-ring {
+  opacity: 1;
+  animation: ringPulse 2s ease-out infinite;
+}
+
+.memo-record-orb {
+  width: 82px;
+  height: 82px;
+  border-radius: 50%;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 2.2rem;
+  background: radial-gradient(circle at 35% 35%, #f59e0b 0%, #d97706 60%, #92400e 100%);
+  box-shadow: 0 0 25px rgba(245, 158, 11, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.3);
+  transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+  position: relative;
+  z-index: 2;
+}
+
+.memo-record-orb:hover {
+  transform: scale(1.08);
+  box-shadow: 0 0 35px rgba(245, 158, 11, 0.8);
+}
+
+.memo-record-orb.recording {
+  background: radial-gradient(circle at 35% 35%, #ef4444 0%, #dc2626 60%, #991b1b 100%);
+  box-shadow: 0 0 40px rgba(239, 68, 68, 0.85);
+  animation: orbSpeakingPulse 0.9s infinite alternate;
+}
+
+.memo-timer {
+  font-family: monospace;
+  font-size: 1.15rem;
+  font-weight: 800;
+  color: #fbbf24;
+  letter-spacing: 0.08em;
+}
+
+.memo-status-label {
+  font-size: 0.78rem;
+  color: #cbd5e1;
+  font-weight: 500;
+}
+
+.memo-transcript-box {
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.memo-transcript-tag {
+  font-size: 0.65rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  color: #fbbf24;
+  letter-spacing: 0.06em;
+}
+
+.memo-transcript-text {
+  font-size: 0.85rem;
+  color: #f1f5f9;
+  font-style: italic;
+  line-height: 1.4;
+  max-height: 90px;
+  overflow-y: auto;
+}
+
+.memo-result-card {
+  padding: 12px 16px;
+  border-radius: var(--radius-md);
+  background: linear-gradient(135deg, rgba(16, 185, 129, 0.15), rgba(99, 102, 241, 0.12));
+  border: 1px solid rgba(16, 185, 129, 0.35);
+  animation: task-enter 0.3s ease;
+}
+
+.memo-result-card h4 {
+  font-size: 0.86rem;
+  color: var(--bella-mint);
+  margin-bottom: 4px;
+  font-weight: 700;
+}
+
+.memo-result-card p {
+  font-size: 0.78rem;
+  color: #e2e8f0;
+}
+
+.voice-memo-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  padding-top: 12px;
+}
+
+/* 4. Streaming Typing Cursor */
+.typing-cursor {
+  display: inline-block;
+  color: var(--bella-rose);
+  font-weight: 900;
+  margin-left: 2px;
+  animation: blinkCursor 0.75s step-start infinite;
+}
+
+@keyframes blinkCursor {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}

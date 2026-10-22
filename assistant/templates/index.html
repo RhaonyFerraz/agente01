@@ -53,6 +53,10 @@
         </div>
       </div>
       <div class="header-actions">
+        <button id="btn-voice-memo-trigger" class="btn-voice-memo" title="Gravar Memorando de Voz Rápido" aria-label="Memorando Rápido" onclick="app.openVoiceMemoModal()">
+          <span class="memo-mic-icon">⚡</span>
+          <span class="memo-text">Memorando</span>
+        </button>
         <button id="btn-wakeword-toggle" class="btn-wakeword-badge active" title="Ativação por voz: diga 'Ei Bella'" onclick="app.toggleWakeWord()">
           <span class="wakeword-icon">🌸</span>
           <span class="wakeword-text">"Ei Bella"</span>
@@ -472,16 +476,40 @@
                 </small>
               </div>
 
-              <!-- Botões de Backup & Restauração -->
-              <div class="cloud-backup-actions">
+              <!-- Sincronização em Tempo Real (Background Sync) -->
+              <div class="cloud-sync-status-box" style="margin-top:14px; padding:12px; background:rgba(16,185,129,0.08); border:1px solid rgba(16,185,129,0.25); border-radius:12px;">
+                <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+                  <div>
+                    <strong style="color:var(--bella-mint); font-size:0.84rem;">🔄 Sincronização Contínua em Background</strong>
+                    <p style="font-size:0.74rem; color:var(--text-muted); margin-top:2px;">
+                      Seus compromissos e tarefas criados no celular sincronizam automaticamente com seu computador.
+                    </p>
+                  </div>
+                  <button type="button" class="btn-subtle" onclick="app.syncWithCloud(true)" style="padding:6px 14px; font-size:0.75rem;">
+                    <span>Sincronizar Agora ⚡</span>
+                  </button>
+                </div>
+              </div>
+
+              <!-- Botões de Backup & Restauração & Telegram -->
+              <div class="cloud-backup-actions" style="margin-top:12px; display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap:8px;">
+                <button type="button" class="btn-backup export" onclick="app.sendBackupToTelegram()" style="background:linear-gradient(135deg, rgba(99,102,241,0.25), rgba(168,85,247,0.2)); border:1px solid rgba(168,85,247,0.4);">
+                  <span>✈️ Enviar Backup ao Telegram</span>
+                </button>
                 <button type="button" class="btn-backup export" onclick="app.exportCloudBackup()">
                   <span>📦 Baixar Backup JSON</span>
                 </button>
+                <button type="button" class="btn-backup export" onclick="app.runServerBackupNow()">
+                  <span>💾 Salvar no Servidor</span>
+                </button>
                 <label class="btn-backup import">
-                  <span>📥 Restaurar Dados JSON</span>
+                  <span>📥 Restaurar JSON</span>
                   <input type="file" id="input-import-backup" accept=".json" style="display:none" onchange="app.importCloudBackup(event)">
                 </label>
               </div>
+              <small class="help-text" style="display:block; margin-top:8px;">
+                🔒 <strong>Backup Semanal Automático:</strong> Toda semana a Bella exporta seus dados e pode enviar o arquivo .json diretamente para o seu chat do Telegram configurado abaixo.
+              </small>
             </div>
 
           </div>
@@ -765,6 +793,47 @@
     </div>
   </div>
 
+  <!-- Modal Memorando de Voz Rápido -->
+  <div id="modal-voice-memo" class="voice-memo-modal-backdrop hidden">
+    <div class="voice-memo-modal glass-card">
+      <div class="voice-memo-header">
+        <div class="voice-memo-title">
+          <span class="memo-header-icon">🎙️</span>
+          <span>Memorando de Voz Rápido</span>
+        </div>
+        <button class="modal-close" onclick="app.closeVoiceMemoModal()">&times;</button>
+      </div>
+
+      <div class="voice-memo-body">
+        <p class="voice-memo-hint">Fale livremente o que deseja lembrar ou anotar. A Bella transcreve e organiza automaticamente em tarefa, compromisso ou nota inteligente.</p>
+
+        <!-- Orbe de Gravação do Memorando -->
+        <div class="memo-recorder-stage">
+          <div id="memo-record-ring" class="memo-ring"></div>
+          <button id="memo-record-orb" type="button" class="memo-record-orb ready" onclick="app.toggleVoiceMemoRecording()" aria-label="Gravar Memorando">
+            <span id="memo-orb-icon" class="memo-orb-icon">🎙️</span>
+          </button>
+          <div id="memo-timer" class="memo-timer">00:00</div>
+          <p id="memo-record-status" class="memo-status-label">Toque no microfone para começar a falar</p>
+        </div>
+
+        <!-- Transcrição em Tempo Real -->
+        <div id="memo-transcript-box" class="memo-transcript-box hidden">
+          <span class="memo-transcript-tag">Transcrição:</span>
+          <p id="memo-transcript-text" class="memo-transcript-text">"..."</p>
+        </div>
+
+        <!-- Card de Confirmação com IA -->
+        <div id="memo-result-card" class="memo-result-card hidden"></div>
+      </div>
+
+      <div class="voice-memo-footer">
+        <button id="btn-memo-cancel" type="button" class="btn-subtle" onclick="app.closeVoiceMemoModal()">Fechar</button>
+        <button id="btn-memo-finish" type="button" class="btn-primary hidden" onclick="app.finishVoiceMemo()">Salvar Memorando ✨</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Modal Modo Áudio Interativo Contínuo (Hands-Free) -->
   <div id="modal-voice-live" class="voice-live-modal-backdrop hidden">
     <div class="voice-live-modal glass-card">
@@ -781,7 +850,7 @@
         <div class="voice-ring ring-3"></div>
         <div class="voice-ring ring-2"></div>
         <div class="voice-ring ring-1"></div>
-        <div id="voice-main-orb" class="voice-main-orb state-listening">
+        <div id="voice-main-orb" class="voice-main-orb state-listening" onclick="app.handleOrbTapInterruption()" title="Toque no orbe ou fale 'Para' para interromper">
           <span class="voice-orb-icon">🌸</span>
         </div>
         <!-- Barras de Frequência Sonora -->
@@ -796,11 +865,12 @@
         </div>
       </div>
 
-      <!-- Status Atual -->
+      <!-- Status Atual com Dica de Barge-in -->
       <div class="voice-status-wrap">
         <span id="voice-live-status-pill" class="voice-status-pill state-listening">
           🟢 Bella está te ouvindo... Fale com ela!
         </span>
+        <span class="voice-bargein-tip">⚡ <strong>Interrupção por voz:</strong> Diga <em>"espera"</em>, <em>"cancela"</em> ou <em>"para"</em> para interromper a fala da Bella.</span>
       </div>
 
       <!-- Transcrições ao Vivo (Usuário e Assistente) -->

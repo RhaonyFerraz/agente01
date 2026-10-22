@@ -44,6 +44,9 @@ class UserPreference(models.Model):
     telegram_chat_id = models.CharField(max_length=100, blank=True, null=True, verbose_name="Chat ID Telegram")
     whatsapp_number = models.CharField(max_length=30, blank=True, null=True, verbose_name="Número WhatsApp (ex: 5519999999999)")
     auto_send_telegram = models.BooleanField(default=False, verbose_name="Envio Automático no Telegram")
+    last_backup_at = models.DateTimeField(null=True, blank=True, verbose_name="Último Backup Realizado")
+    auto_backup_enabled = models.BooleanField(default=True, verbose_name="Backup Automático Semanal")
+    auto_backup_telegram = models.BooleanField(default=True, verbose_name="Enviar Backup ao Telegram")
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
@@ -178,4 +181,21 @@ class QuickTask(models.Model):
     def __str__(self):
         status = "✅" if self.is_done else "⬜"
         return f"{status} {self.title}"
+
+
+class VoiceMemo(models.Model):
+    """Memorandos e notas de voz gravados com categorização automática por IA"""
+    transcript = models.TextField(verbose_name="Transcrição do Áudio")
+    intent_detected = models.CharField(max_length=30, default="note", verbose_name="Intenção (task, event, note)")
+    action_taken = models.CharField(max_length=150, blank=True, verbose_name="Ação Executada")
+    is_processed = models.BooleanField(default=True, verbose_name="Processado")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Memorando de Voz"
+        verbose_name_plural = "Memorandos de Voz"
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"[{self.intent_detected}] {self.transcript[:40]}"
 

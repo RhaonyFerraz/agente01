@@ -34,6 +34,13 @@ class PersonalAssistantApp {
     this.visualizerRaf = null;
     this.wakeWordActive = localStorage.getItem('bella_wakeword_enabled') !== 'false';
     this.wakeWordRecognition = null;
+
+    // Memorando de Voz Rápido
+    this.isMemoRecording = false;
+    this.memoTranscript = '';
+    this.memoSeconds = 0;
+    this.memoTimerInterval = null;
+    this.memoRecognition = null;
     
     try {
       this.init();
@@ -61,6 +68,8 @@ class PersonalAssistantApp {
     this.loadWeeklyForecast();
     this.loadTasks();
     this.loadCloudDbStatus();
+    this.initCloudSync();
+    setTimeout(() => this.checkWeeklyBackup(), 8000);
     // Solicita perm. notif. com pequeno delay (não bloqueia)
     setTimeout(() => this.requestPushPermission(), 3000);
   }
@@ -1108,74 +1117,151 @@ class PersonalAssistantApp {
     input.value = '';
     const nowStr = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
 
-    // Renderiza mensagem do usuário
+    // 1. Renderiza mensagem do usuário
     this.renderChatMessage({ role: 'user', content: text, created_at: nowStr });
 
-    // Renderiza indicador de digitação
+    // 2. Bolha assistente que vai receber o streaming ao vivo
     const container = document.getElementById('chat-messages-container');
-    const typingId = `typing-${Date.now()}`;
+    const bubbleId = `msg-stream-${Date.now()}`;
+    let bubbleEl = null;
+    let contentDiv = null;
+
     if (container) {
-      const typingDiv = document.createElement('div');
-      typingDiv.id = typingId;
-      typingDiv.className = 'chat-bubble assistant';
-      typingDiv.innerHTML = '<span style="opacity:0.7;">Pensando e processando... ✨</span>';
-      container.appendChild(typingDiv);
+      bubbleEl = document.createElement('div');
+      bubbleEl.id = bubbleId;
+      bubbleEl.className = 'chat-bubble assistant';
+      bubbleEl.innerHTML = `
+        <div class="stream-content"><span style="opacity:0.75;">Bella pensando e consultando... ✨</span></div>
+        <div class="chat-bubble-footer"><span>${nowStr}</span></div>
+      `;
+      container.appendChild(bubbleEl);
       container.scrollTop = container.scrollHeight;
+      contentDiv = bubbleEl.querySelector('.stream-content');
     }
 
     try {
-      const res = await fetch('/api/chat/send/', {
+      const response = await fetch('/api/chat/stream/', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message: text })
       });
-      const data = await res.json();
 
-      // Remove typing
-      const typingEl = document.getElementById(typingId);
-      if (typingEl) typingEl.remove();
+      if (!response.ok || !response.body) {
+        throw new Error('Falha na resposta do stream');
+      }
 
-      if (data.status === 'success' && data.result) {
-        const resObj = data.result;
-        this.renderChatMessage({
-          role: 'assistant',
-          content: resObj.reply,
-          action_type: resObj.action_type,
-          action_executed: resObj.action_executed,
-          created_at: resObj.created_at || nowStr
-        });
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder('utf-8');
+      let accumulatedText = '';
+      let donePayload = null;
+      let buffer = '';
 
-        // Se uma ação foi executada (ex: novo evento), atualiza os dados em tempo real
-        if (resObj.action_executed) {
-          if (resObj.action_executed.type === 'event_created') {
-            this.showToast(`📅 "${resObj.action_executed.title}" adicionado à sua agenda!`);
-            this.loadTodayBriefing();
-          } else if (resObj.action_executed.type === 'email_created') {
-            this.showToast(`✉️ "${resObj.action_executed.subject}" registrado nos e-mails!`);
-            this.loadTodayBriefing();
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop(); // Mantém pedaço incompleto se houver
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (trimmed.startsWith('data: ')) {
+            try {
+              const data = JSON.parse(trimmed.slice(6));
+              if (data.type === 'chunk' && data.text) {
+                accumulatedText += data.text;
+                if (contentDiv) {
+                  contentDiv.innerHTML = `${this.formatMarkdown(accumulatedText)}<span class="typing-cursor">▊</span>`;
+                  if (container) container.scrollTop = container.scrollHeight;
+                }
+              } else if (data.type === 'done') {
+                donePayload = data;
+              }
+            } catch (err) {
+              console.warn('Erro ao processar chunk SSE:', err);
+            }
           }
         }
+      }
 
-        // Fala a resposta por voz se habilitado
-        if (this.voiceReplyActive && resObj.reply) {
-          this.speakText(resObj.reply);
+      // Finaliza o texto acumulado removendo o cursor
+      const finalReply = donePayload?.reply || accumulatedText || 'Processado com sucesso.';
+      if (contentDiv) {
+        contentDiv.innerHTML = this.formatMarkdown(finalReply);
+      }
+
+      // Se houver ação executada (evento, tarefa ou e-mail), adiciona badge e toasts
+      if (donePayload?.action_executed) {
+        const act = donePayload.action_executed;
+        let badgeHtml = '';
+        if (act.type === 'event_created') {
+          badgeHtml = `
+            <div class="action-pill-card">
+              <span>📅</span>
+              <strong>Compromisso "${act.title}" salvo na Agenda (${act.time || 'Hoje'})</strong>
+            </div>
+          `;
+          this.showToast(`📅 "${act.title}" adicionado à sua agenda!`);
+          this.loadTodayBriefing();
+        } else if (act.type === 'task_created') {
+          badgeHtml = `
+            <div class="action-pill-card">
+              <span>🎯</span>
+              <strong>Tarefa "${act.title}" adicionada!</strong>
+            </div>
+          `;
+          this.showToast(`🎯 Tarefa "${act.title}" criada!`);
+          this.loadTasks();
+        } else if (act.type === 'task_completed') {
+          badgeHtml = `
+            <div class="action-pill-card">
+              <span>✅</span>
+              <strong>Tarefa "${act.title}" concluída!</strong>
+            </div>
+          `;
+          this.showToast(`✅ Tarefa "${act.title}" marcada como feita!`);
+          this.loadTasks();
+        } else if (act.type === 'email_created') {
+          badgeHtml = `
+            <div class="action-pill-card">
+              <span>✉️</span>
+              <strong>E-mail salvo com prioridade</strong>
+            </div>
+          `;
+          this.showToast(`✉️ "${act.subject}" registrado nos e-mails!`);
+          this.loadTodayBriefing();
         }
-      } else {
-        this.renderChatMessage({
-          role: 'assistant',
-          content: 'Desculpe, ocorreu uma instabilidade ao processar a resposta.',
-          created_at: nowStr
-        });
+
+        if (badgeHtml && bubbleEl) {
+          const badgeDiv = document.createElement('div');
+          badgeDiv.innerHTML = badgeHtml;
+          bubbleEl.insertBefore(badgeDiv, bubbleEl.querySelector('.chat-bubble-footer'));
+        }
+      }
+
+      // Adiciona botão de ouvir no rodapé da bolha
+      if (bubbleEl) {
+        const footer = bubbleEl.querySelector('.chat-bubble-footer');
+        if (footer) {
+          footer.innerHTML = `
+            <button class="chat-play-audio-btn" onclick="app.speakText('${finalReply.replace(/'/g, "\\'").replace(/\n/g, ' ')}')">
+              🔊 Ouvir
+            </button>
+            <span>${nowStr}</span>
+          `;
+        }
+      }
+
+      // Fala a resposta por voz se habilitado
+      if (this.voiceReplyActive && finalReply) {
+        this.speakText(finalReply);
       }
     } catch (err) {
-      console.error(err);
-      const typingEl = document.getElementById(typingId);
-      if (typingEl) typingEl.remove();
-      this.renderChatMessage({
-        role: 'assistant',
-        content: 'Não foi possível conectar com o servidor no momento.',
-        created_at: nowStr
-      });
+      console.error('Erro no streaming, tentando fallback:', err);
+      if (contentDiv) {
+        contentDiv.innerHTML = 'Desculpe, ocorreu uma instabilidade ao processar a resposta.';
+      }
     }
   }
 
@@ -1264,12 +1350,30 @@ class PersonalAssistantApp {
         }
       }
 
+      const spoken = (finalTranscript || interimTranscript).toLowerCase().trim();
+
+      // BARGE-IN: Se a Bella estiver falando e o usuário emitir voz ou palavras de parada
+      if (this.isAssistantSpeakingLive && spoken) {
+        const isBargeIn = spoken.includes('para') || spoken.includes('cancela') || spoken.includes('espera') || spoken.includes('silêncio') || spoken.includes('silencio') || spoken.includes('pausa') || spoken.includes('calma') || spoken.includes('chega') || spoken.includes('bella') || spoken.split(' ').length >= 2;
+        if (isBargeIn) {
+          console.log('⚡ BARGE-IN DETECTADO! Interrompendo fala da Bella:', spoken);
+          this.interruptAssistantSpeech();
+          const userTextEl = document.getElementById('voice-live-user-text');
+          if (userTextEl) {
+            userTextEl.textContent = `"${spoken}" (interrompido)`;
+          }
+          if (spoken === 'para' || spoken === 'parar' || spoken === 'cancela' || spoken === 'espera' || spoken === 'silêncio') {
+            return;
+          }
+        }
+      }
+
       const userTextEl = document.getElementById('voice-live-user-text');
       if (userTextEl) {
         userTextEl.textContent = `"${finalTranscript || interimTranscript || 'Ouvindo...'}"`;
       }
 
-      if (finalTranscript && finalTranscript.trim()) {
+      if (finalTranscript && finalTranscript.trim() && !this.isAssistantSpeakingLive) {
         this.handleLiveVoiceUtterance(finalTranscript.trim());
       }
     };
@@ -1297,6 +1401,9 @@ class PersonalAssistantApp {
     this.continuousVoiceActive = true;
     this.continuousVoicePaused = false;
     this.isAssistantSpeakingLive = false;
+
+    // Feedback Sonoro de Ativação (Chime estilo Alexa/Siri)
+    this.playActivationChime();
 
     // Pausa a wake word durante a sessão contínua para evitar concorrência no microfone
     if (this.wakeWordRecognition) {
@@ -1461,19 +1568,45 @@ class PersonalAssistantApp {
   speakLiveUtterance(text, onComplete) {
     this.isAssistantSpeakingLive = true;
     this.setLiveVoiceStatus('speaking');
-    this.stopLiveListening(); // Silencia o microfone enquanto a Bella fala para evitar feedback e eco
+
+    // BARGE-IN: Mantém reconhecimento do microfone atento durante a fala para permitir interrupção
+    try {
+      if (this.continuousRecognition) {
+        this.continuousRecognition.start();
+      }
+    } catch (e) {}
 
     this.playBellaSpeech(text, {
       isLive: true,
       onStart: () => {
         this.isAssistantSpeakingLive = true;
         this.setLiveVoiceStatus('speaking');
-        this.stopLiveListening();
       }
     }, () => {
       this.isAssistantSpeakingLive = false;
       if (onComplete) onComplete();
     });
+  }
+
+  interruptAssistantSpeech() {
+    this.stopAllAudio();
+    this.isAssistantSpeakingLive = false;
+    this.playCancelChime();
+    this.setLiveVoiceStatus('listening');
+    this.showToast('⚡ Fala interrompida! Pode falar...');
+    const aiTextEl = document.getElementById('voice-live-ai-text');
+    if (aiTextEl) aiTextEl.textContent = 'Interrompido. Estou ouvindo você...';
+    try {
+      if (this.continuousRecognition) {
+        this.continuousRecognition.start();
+      }
+    } catch (e) {}
+  }
+
+  handleOrbTapInterruption() {
+    if (this.isAssistantSpeakingLive) {
+      this.interruptAssistantSpeech();
+    }
   }
 
   setLiveVoiceStatus(state) {
@@ -1772,9 +1905,19 @@ class PersonalAssistantApp {
         input.value = '';
         await this.loadTasks();
         this.showToast('🎯 Tarefa adicionada!');
+        this.syncWithCloud(false);
+      } else {
+        throw new Error('Falha na resposta do servidor');
       }
     } catch (e) {
-      this.showToast('Erro ao adicionar tarefa.');
+      this.enqueueOfflineItem('tasks', {
+        title,
+        priority,
+        category: 'work',
+        due_date: new Date().toISOString().split('T')[0]
+      });
+      input.value = '';
+      this.showToast('📱 Salvo offline! Sincronizará com a nuvem assim que conectar.');
     }
   }
 
@@ -1994,10 +2137,295 @@ class PersonalAssistantApp {
   }
 
   triggerWakeWordActivation() {
+    this.playActivationChime();
     if (this.wakeWordRecognition) {
       try { this.wakeWordRecognition.stop(); } catch(e) {}
     }
     this.startContinuousVoiceMode();
+  }
+
+  /* =========================================================================
+     SÍNTESE DE CHIMES SONOROS (WEB AUDIO API - ALEXA/SIRI STYLE)
+  ========================================================================= */
+  playActivationChime() {
+    try {
+      this.initAudioContext();
+      if (!this.audioContext) return;
+      const ctx = this.audioContext;
+      const now = ctx.currentTime;
+
+      // Nota 1 (C5 - 523.25 Hz)
+      const osc1 = ctx.createOscillator();
+      const gain1 = ctx.createGain();
+      osc1.type = 'sine';
+      osc1.frequency.setValueAtTime(523.25, now);
+      gain1.gain.setValueAtTime(0.001, now);
+      gain1.gain.exponentialRampToValueAtTime(0.24, now + 0.02);
+      gain1.gain.exponentialRampToValueAtTime(0.0001, now + 0.22);
+      osc1.connect(gain1);
+      gain1.connect(ctx.destination);
+      osc1.start(now);
+      osc1.stop(now + 0.23);
+
+      // Nota 2 harmônica (G5 - 783.99 Hz) ligeiramente deslocada
+      const osc2 = ctx.createOscillator();
+      const gain2 = ctx.createGain();
+      osc2.type = 'sine';
+      osc2.frequency.setValueAtTime(783.99, now + 0.08);
+      gain2.gain.setValueAtTime(0.001, now + 0.08);
+      gain2.gain.exponentialRampToValueAtTime(0.28, now + 0.10);
+      gain2.gain.exponentialRampToValueAtTime(0.0001, now + 0.38);
+      osc2.connect(gain2);
+      gain2.connect(ctx.destination);
+      osc2.start(now + 0.08);
+      osc2.stop(now + 0.39);
+    } catch (e) {
+      console.warn('Erro ao tocar chime de ativação:', e);
+    }
+  }
+
+  playCompletionChime() {
+    try {
+      this.initAudioContext();
+      if (!this.audioContext) return;
+      const ctx = this.audioContext;
+      const now = ctx.currentTime;
+
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(587.33, now); // D5
+      osc.frequency.exponentialRampToValueAtTime(880.00, now + 0.12); // A5
+      gain.gain.setValueAtTime(0.001, now);
+      gain.gain.exponentialRampToValueAtTime(0.25, now + 0.03);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.34);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now);
+      osc.stop(now + 0.35);
+    } catch (e) {
+      console.warn('Erro ao tocar chime de conclusão:', e);
+    }
+  }
+
+  playCancelChime() {
+    try {
+      this.initAudioContext();
+      if (!this.audioContext) return;
+      const ctx = this.audioContext;
+      const now = ctx.currentTime;
+
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(520, now);
+      osc.frequency.exponentialRampToValueAtTime(320, now + 0.14);
+      gain.gain.setValueAtTime(0.001, now);
+      gain.gain.exponentialRampToValueAtTime(0.2, now + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.24);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now);
+      osc.stop(now + 0.25);
+    } catch (e) {
+      console.warn('Erro ao tocar cancel chime:', e);
+    }
+  }
+
+  /* =========================================================================
+     MEMORANDO DE VOZ RÁPIDO COM TRANSCRIÇÃO E CATEGORIZAÇÃO IA
+  ========================================================================= */
+  openVoiceMemoModal() {
+    this.playActivationChime();
+    const modal = document.getElementById('modal-voice-memo');
+    if (modal) modal.classList.remove('hidden');
+
+    const statusLabel = document.getElementById('memo-record-status');
+    if (statusLabel) statusLabel.textContent = 'Toque no microfone para começar a gravar';
+
+    const transcriptBox = document.getElementById('memo-transcript-box');
+    if (transcriptBox) transcriptBox.classList.add('hidden');
+
+    const resultCard = document.getElementById('memo-result-card');
+    if (resultCard) {
+      resultCard.classList.add('hidden');
+      resultCard.innerHTML = '';
+    }
+
+    const finishBtn = document.getElementById('btn-memo-finish');
+    if (finishBtn) finishBtn.classList.add('hidden');
+
+    const timerEl = document.getElementById('memo-timer');
+    if (timerEl) timerEl.textContent = '00:00';
+  }
+
+  closeVoiceMemoModal() {
+    this.stopVoiceMemoRecording();
+    const modal = document.getElementById('modal-voice-memo');
+    if (modal) modal.classList.add('hidden');
+  }
+
+  toggleVoiceMemoRecording() {
+    if (this.isMemoRecording) {
+      this.stopVoiceMemoRecording();
+    } else {
+      this.startVoiceMemoRecording();
+    }
+  }
+
+  startVoiceMemoRecording() {
+    const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRec) {
+      this.showToast('Reconhecimento de voz não suportado neste navegador.');
+      return;
+    }
+
+    this.playActivationChime();
+    this.isMemoRecording = true;
+    this.memoTranscript = '';
+    this.memoSeconds = 0;
+
+    const orb = document.getElementById('memo-record-orb');
+    if (orb) orb.classList.add('recording');
+
+    const stage = document.querySelector('.memo-recorder-stage');
+    if (stage) stage.classList.add('recording');
+
+    const statusLabel = document.getElementById('memo-record-status');
+    if (statusLabel) statusLabel.textContent = 'Gravando... Fale seu memorando livremente';
+
+    const transcriptBox = document.getElementById('memo-transcript-box');
+    if (transcriptBox) transcriptBox.classList.remove('hidden');
+
+    const finishBtn = document.getElementById('btn-memo-finish');
+    if (finishBtn) finishBtn.classList.remove('hidden');
+
+    // Timer
+    const timerEl = document.getElementById('memo-timer');
+    if (this.memoTimerInterval) clearInterval(this.memoTimerInterval);
+    this.memoTimerInterval = setInterval(() => {
+      this.memoSeconds++;
+      const mins = String(Math.floor(this.memoSeconds / 60)).padStart(2, '0');
+      const secs = String(this.memoSeconds % 60).padStart(2, '0');
+      if (timerEl) timerEl.textContent = `${mins}:${secs}`;
+    }, 1000);
+
+    // Inicia Speech Recognition
+    this.memoRecognition = new SpeechRec();
+    this.memoRecognition.continuous = true;
+    this.memoRecognition.interimResults = true;
+    this.memoRecognition.lang = 'pt-BR';
+
+    this.memoRecognition.onresult = (event) => {
+      let interim = '';
+      let final = '';
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        if (event.results[i].isFinal) {
+          final += event.results[i][0].transcript;
+        } else {
+          interim += event.results[i][0].transcript;
+        }
+      }
+      if (final) {
+        this.memoTranscript = (this.memoTranscript + ' ' + final).trim();
+      }
+      const textEl = document.getElementById('memo-transcript-text');
+      if (textEl) {
+        textEl.textContent = `"${this.memoTranscript || interim || 'Ouvindo...'}"`;
+      }
+    };
+
+    this.memoRecognition.onerror = (e) => {
+      console.warn('Erro gravação memorando:', e);
+    };
+
+    try {
+      this.memoRecognition.start();
+    } catch(e) {}
+  }
+
+  stopVoiceMemoRecording() {
+    this.isMemoRecording = false;
+    if (this.memoTimerInterval) {
+      clearInterval(this.memoTimerInterval);
+      this.memoTimerInterval = null;
+    }
+
+    const orb = document.getElementById('memo-record-orb');
+    if (orb) orb.classList.remove('recording');
+
+    const stage = document.querySelector('.memo-recorder-stage');
+    if (stage) stage.classList.remove('recording');
+
+    const statusLabel = document.getElementById('memo-record-status');
+    if (statusLabel) statusLabel.textContent = 'Gravação pausada. Toque em Salvar Memorando.';
+
+    if (this.memoRecognition) {
+      try { this.memoRecognition.stop(); } catch(e) {}
+    }
+  }
+
+  async finishVoiceMemo() {
+    this.stopVoiceMemoRecording();
+    const transcript = (this.memoTranscript || '').trim();
+
+    if (!transcript) {
+      const textEl = document.getElementById('memo-transcript-text');
+      const curText = textEl ? textEl.textContent.replace(/"/g, '').trim() : '';
+      if (!curText || curText === 'Ouvindo...' || curText === '...') {
+        this.showToast('Nenhuma fala foi capturada. Tente falar novamente.');
+        return;
+      }
+      this.memoTranscript = curText;
+    }
+
+    const statusLabel = document.getElementById('memo-record-status');
+    if (statusLabel) statusLabel.textContent = 'Processando e categorizando com IA... ✨';
+
+    try {
+      const res = await fetch('/api/voice/memo/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ transcript: this.memoTranscript })
+      });
+      const data = await res.json();
+
+      if (data.status === 'success' && data.result) {
+        this.playCompletionChime();
+        const r = data.result;
+        const resultCard = document.getElementById('memo-result-card');
+        if (resultCard) {
+          resultCard.classList.remove('hidden');
+          const typeBadge = r.intent === 'event' ? '📅 Compromisso Agendado' : (r.intent === 'task' ? '🎯 Tarefa Criada' : '📌 Nota Salva');
+          resultCard.innerHTML = `
+            <h4>${typeBadge}</h4>
+            <p><strong>Ação:</strong> ${r.action_taken}</p>
+          `;
+        }
+        this.showToast(`✨ Memorando salvo! [${r.intent.toUpperCase()}]`);
+
+        // Atualiza a interface
+        if (r.intent === 'event') {
+          this.loadTodayBriefing();
+        } else {
+          this.loadTasks();
+        }
+
+        // Bella confirma por voz
+        if (this.voiceReplyActive && r.reply) {
+          this.speakText(r.reply);
+        }
+
+        setTimeout(() => {
+          this.closeVoiceMemoModal();
+        }, 3200);
+      } else {
+        this.showToast('Erro ao salvar memorando.');
+      }
+    } catch (e) {
+      console.error('Erro ao enviar memorando:', e);
+      this.showToast('Erro de conexão ao salvar memorando.');
+    }
   }
 
   /* =========================================================================
@@ -2340,6 +2768,257 @@ class PersonalAssistantApp {
     const sampleText = "Oi, Rhaony! Eu sou a Bella, sua assistente pessoal! Minha voz já está configurada como você pediu. Como posso te ajudar hoje?";
     this.showToast('🌸 Bella falando teste de voz...');
     this.playBellaSpeech(sampleText);
+  }
+
+  /* =========================================================================
+     4. NUVEM, SINCRONIZAÇÃO EM BACKGROUND & BACKUP PERIÓDICO (SUPABASE/TELEGRAM)
+  ========================================================================= */
+
+  initCloudSync() {
+    // Sincroniza ao voltar para a aba ou desbloquear o celular
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') {
+        this.syncWithCloud(false);
+      }
+    });
+
+    // Sincroniza imediatamente ao reconectar à internet
+    window.addEventListener('online', () => {
+      this.showToast('🌐 Conexão restabelecida! Sincronizando com a nuvem...');
+      this.syncWithCloud(true);
+    });
+
+    // Sincronização periódica em background (a cada 60 segundos)
+    setInterval(() => {
+      if (navigator.onLine) {
+        this.syncWithCloud(false);
+      }
+    }, 60 * 1000);
+  }
+
+  getOfflineQueue() {
+    try {
+      const raw = localStorage.getItem('bella_offline_queue');
+      return raw ? JSON.parse(raw) : { tasks: [], events: [] };
+    } catch (e) {
+      return { tasks: [], events: [] };
+    }
+  }
+
+  enqueueOfflineItem(type, item) {
+    const queue = this.getOfflineQueue();
+    if (!queue[type]) queue[type] = [];
+    queue[type].push(item);
+    localStorage.setItem('bella_offline_queue', JSON.stringify(queue));
+  }
+
+  clearOfflineQueue() {
+    localStorage.removeItem('bella_offline_queue');
+  }
+
+  async syncWithCloud(showToast = false) {
+    const queue = this.getOfflineQueue();
+    const lastSync = localStorage.getItem('bella_last_sync_time') || null;
+
+    try {
+      const res = await fetch('/api/cloud-db/sync/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          items: queue,
+          last_sync: lastSync,
+        }),
+      });
+
+      if (!res.ok) return;
+
+      const data = await res.json();
+      if (data.success) {
+        localStorage.setItem('bella_last_sync_time', data.synced_at || new Date().toISOString());
+
+        // Se tinha itens na fila e foram processados, limpa a fila
+        const importedCount = (data.imported?.tasks || 0) + (data.imported?.events || 0);
+        if (importedCount > 0 || (queue.tasks && queue.tasks.length > 0)) {
+          this.clearOfflineQueue();
+        }
+
+        // Atualiza tarefas se a nuvem tiver itens mais novos
+        if (data.tasks && data.tasks.length > 0) {
+          await this.loadTasks();
+        }
+
+        // Atualiza status na interface se o card de nuvem estiver visível
+        this.updateSyncUI(data);
+
+        if (showToast) {
+          const countInfo = importedCount > 0 ? ` (${importedCount} alterações salvas)` : '';
+          this.showToast(`⚡ Nuvem sincronizada em tempo real!${countInfo}`);
+        }
+      }
+    } catch (e) {
+      console.warn('Background sync temporariamente indisponível:', e);
+    }
+  }
+
+  updateSyncUI(syncData) {
+    const timeStr = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+    const syncStatusEl = document.querySelector('.cloud-sync-status-box p');
+    if (syncStatusEl) {
+      const totalRecs = (syncData.tasks ? syncData.tasks.length : 0) + (syncData.events ? syncData.events.length : 0);
+      syncStatusEl.innerHTML = `🟢 <strong>Sincronizado às ${timeStr}</strong> • ${totalRecs} registros integrados.`;
+    }
+  }
+
+  async loadCloudDbStatus() {
+    try {
+      const res = await fetch('/api/cloud-db/status/');
+      if (!res.ok) return;
+      const data = await res.json();
+
+      const dot = document.getElementById('cloud-db-status-dot');
+      const text = document.getElementById('cloud-db-status-text');
+      const latency = document.getElementById('cloud-db-latency');
+      const count = document.getElementById('cloud-db-records-count');
+      const urlInput = document.getElementById('cfg-cloud-db-url');
+
+      if (dot && text) {
+        if (data.connected) {
+          dot.className = 'status-dot green';
+          text.textContent = `Conectado (${data.provider_label || data.provider})`;
+        } else {
+          dot.className = 'status-dot red';
+          text.textContent = 'Desconectado';
+        }
+      }
+
+      if (latency) {
+        latency.textContent = data.latency_ms ? `${data.latency_ms} ms` : 'N/A';
+      }
+
+      if (count) {
+        count.textContent = data.total_records !== undefined ? data.total_records : '-';
+      }
+
+      if (urlInput && data.database_url && !urlInput.value) {
+        urlInput.value = data.database_url;
+      }
+    } catch (e) {
+      console.warn('Erro ao carregar status do banco em nuvem:', e);
+    }
+  }
+
+  toggleDbUrlVisibility() {
+    const input = document.getElementById('cfg-cloud-db-url');
+    const btn = document.getElementById('btn-toggle-db-url-visibility');
+    if (!input) return;
+    if (input.type === 'password') {
+      input.type = 'text';
+      if (btn) btn.textContent = '🙈';
+    } else {
+      input.type = 'password';
+      if (btn) btn.textContent = '👁️';
+    }
+  }
+
+  async testCloudDbConnection() {
+    const input = document.getElementById('cfg-cloud-db-url');
+    const url = input ? input.value.trim() : '';
+
+    this.showToast('Testando conexão com Supabase...');
+    try {
+      const res = await fetch('/api/cloud-db/test/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ database_url: url }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        this.showToast(`✅ Conexão bem-sucedida com ${data.provider}! Latência: ${data.latency_ms} ms`);
+      } else {
+        this.showToast(`❌ Falha na conexão: ${data.error}`);
+      }
+    } catch (e) {
+      this.showToast('Erro ao testar conexão de rede.');
+    }
+  }
+
+  async saveCloudDbUrl() {
+    const input = document.getElementById('cfg-cloud-db-url');
+    const url = input ? input.value.trim() : '';
+    if (!url) {
+      this.showToast('Por favor, informe a URL do banco PostgreSQL.');
+      return;
+    }
+
+    this.showToast('Salvando conexão e aplicando migrações...');
+    try {
+      const res = await fetch('/api/cloud-db/save/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ database_url: url }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        this.showToast(`☁️ Conectado! ${data.message}`);
+        await this.loadCloudDbStatus();
+        await this.syncWithCloud(true);
+      } else {
+        this.showToast(`❌ Erro: ${data.error}`);
+      }
+    } catch (e) {
+      this.showToast('Erro ao salvar conexão com a nuvem.');
+    }
+  }
+
+  exportCloudBackup() {
+    this.showToast('📦 Baixando backup JSON completo...');
+    window.location.href = '/api/cloud-db/export/';
+  }
+
+  async runServerBackupNow() {
+    this.showToast('💾 Gerando backup de segurança no servidor...');
+    try {
+      const res = await fetch('/api/backup/run/', { method: 'POST' });
+      const data = await res.json();
+      if (data.status === 'success' && data.result) {
+        this.showToast(`✅ Backup salvo: ${data.result.filename} (${data.result.size_kb} KB)`);
+      } else {
+        this.showToast('Erro ao gerar backup no servidor.');
+      }
+    } catch (e) {
+      this.showToast('Erro de conexão ao salvar backup.');
+    }
+  }
+
+  async sendBackupToTelegram() {
+    this.showToast('✈️ Exportando dados e enviando arquivo ao Telegram...');
+    try {
+      const res = await fetch('/api/backup/telegram/', { method: 'POST' });
+      const data = await res.json();
+      if (data.success) {
+        this.showToast('🎉 Arquivo JSON de backup enviado com sucesso para seu Telegram!');
+      } else {
+        this.showToast(`❌ Não foi possível enviar: ${data.error || 'Verifique as chaves do Telegram'}`);
+      }
+    } catch (e) {
+      this.showToast('Erro ao comunicar com o bot do Telegram.');
+    }
+  }
+
+  async checkWeeklyBackup() {
+    try {
+      const res = await fetch('/api/backup/check-auto/');
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data.backup_created) {
+        console.log('Backup periódico automático executado:', data);
+        if (data.telegram_sent) {
+          this.showToast('🔒 Backup semanal automático enviado ao seu Telegram!');
+        }
+      }
+    } catch (e) {
+      // Falha silenciosa para rotina em background
+    }
   }
 
   escapeHtml(text) {

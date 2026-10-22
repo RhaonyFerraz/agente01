@@ -1,12 +1,12 @@
 import json
 from django.shortcuts import render
-from django.http import JsonResponse, HttpResponse
+from django.http import JsonResponse, HttpResponse, StreamingHttpResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.utils import timezone
-from .models import Theme, UserPreference, CalendarEvent, EmailHighlight, DailyBriefing, ChatMessage
+from .models import Theme, UserPreference, CalendarEvent, EmailHighlight, DailyBriefing, ChatMessage, VoiceMemo
 from .services import (
     BriefingOrchestrator, WeatherService, CurrencyService, 
-    GeminiService, ChatAssistantService, NotificationService, NeuralVoiceService
+    GeminiService, ChatAssistantService, NotificationService, NeuralVoiceService, VoiceMemoService
 )
 
 def index_view(request):
@@ -395,6 +395,33 @@ def api_chat_send(request):
 
 
 @csrf_exempt
+def api_chat_stream(request):
+    """GET ou POST /api/chat/stream/ - Streaming em tempo real (SSE) da resposta da Bella"""
+    if request.method in ["POST", "GET"]:
+        if request.method == "POST":
+            try:
+                body = parse_json_body(request)
+                message = body.get("message", "").strip()
+            except Exception:
+                message = request.POST.get("message", "").strip()
+        else:
+            message = request.GET.get("message", "").strip()
+
+        if not message:
+            return JsonResponse({"error": "Mensagem vazia"}, status=400)
+
+        response = StreamingHttpResponse(
+            ChatAssistantService.process_message_stream(message),
+            content_type="text/event-stream"
+        )
+        response['Cache-Control'] = 'no-cache, no-transform'
+        response['X-Accel-Buffering'] = 'no'
+        return response
+
+    return JsonResponse({"error": "Método não permitido"}, status=405)
+
+
+@csrf_exempt
 def api_send_telegram(request):
     """POST /api/notifications/telegram/send/ - Envia o resumo matinal atual para o Telegram"""
     if request.method == "POST":
@@ -627,6 +654,54 @@ def api_cloud_db_import(request):
 
 
 @csrf_exempt
+def api_cloud_db_sync(request):
+    """POST ou GET /api/cloud-db/sync/ - Sincronização bidirecional em tempo real entre dispositivos e nuvem"""
+    from .cloud_service import CloudDatabaseService
+    if request.method == "POST":
+        try:
+            body = parse_json_body(request)
+            client_items = body.get("items", {})
+            last_sync = body.get("last_sync")
+            res = CloudDatabaseService.sync_client_data(client_items=client_items, last_sync_iso=last_sync)
+            return JsonResponse(res)
+        except Exception as e:
+            return JsonResponse({"success": False, "error": str(e)}, status=400)
+    elif request.method == "GET":
+        res = CloudDatabaseService.sync_client_data()
+        return JsonResponse(res)
+    return JsonResponse({"error": "Método não permitido"}, status=405)
+
+
+@csrf_exempt
+def api_backup_run(request):
+    """POST ou GET /api/backup/run/ - Executa backup JSON imediatamente no servidor"""
+    from .cloud_service import BackupService
+    try:
+        res = BackupService.create_backup_file()
+        return JsonResponse({"status": "success", "result": res})
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=400)
+
+
+@csrf_exempt
+def api_backup_telegram(request):
+    """POST ou GET /api/backup/telegram/ - Gera backup e envia arquivo real anexado ao Telegram"""
+    from .cloud_service import BackupService
+    try:
+        res = BackupService.send_backup_to_telegram()
+        return JsonResponse(res)
+    except Exception as e:
+        return JsonResponse({"success": False, "error": str(e)}, status=400)
+
+
+def api_backup_check_auto(request):
+    """GET /api/backup/check-auto/ - Verifica e executa o backup semanal periódico automático"""
+    from .cloud_service import BackupService
+    res = BackupService.check_and_run_weekly_backup()
+    return JsonResponse(res)
+
+
+@csrf_exempt
 def api_voice_tts(request):
     """GET ou POST /api/voice/tts/ - Gera áudio MP3 neural em tempo real com Edge-TTS"""
     try:
@@ -658,6 +733,41 @@ def api_voice_tts(request):
     except Exception as e:
         print(f"Erro ao gerar síntese vocal neural: {e}")
         return JsonResponse({"error": str(e)}, status=500)
+
+
+@csrf_exempt
+def api_voice_memo(request):
+    """POST /api/voice/memo/ - Processa e categoriza notas e memorandos de voz rápidos
+       GET /api/voice/memo/ - Retorna histórico dos últimos memorandos
+    """
+    if request.method == "POST":
+        try:
+            body = parse_json_body(request)
+            text = body.get("transcript", "").strip() or body.get("text", "").strip()
+            if not text:
+                return JsonResponse({"error": "Áudio ou texto de memorando não informado"}, status=400)
+
+            result = VoiceMemoService.process_memo(text)
+            return JsonResponse({"status": "success", "result": result})
+        except Exception as e:
+            return JsonResponse({"error": str(e)}, status=400)
+
+    elif request.method == "GET":
+        memos = VoiceMemo.objects.all().order_by('-created_at')[:15]
+        return JsonResponse({
+            "memos": [
+                {
+                    "id": m.id,
+                    "transcript": m.transcript,
+                    "intent": m.intent_detected,
+                    "action_taken": m.action_taken,
+                    "created_at": timezone.localtime(m.created_at).strftime("%d/%m %H:%M")
+                }
+                for m in memos
+            ]
+        })
+
+    return JsonResponse({"error": "Método não permitido"}, status=405)
 
 
 

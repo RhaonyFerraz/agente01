@@ -27,7 +27,7 @@ except Exception as e:
     print(f"Erro ao inicializar Django: {e}")
     sys.exit(1)
 
-from assistant.cloud_service import CloudDatabaseService
+from assistant.cloud_service import CloudDatabaseService, BackupService
 from django.core.management import call_command
 
 
@@ -39,6 +39,8 @@ def main():
     parser.add_argument('--export', type=str, nargs='?', const='backup_assistente.json', help="Exporta dados para arquivo JSON")
     parser.add_argument('--import-file', type=str, help="Importa dados de um arquivo JSON")
     parser.add_argument('--set-url', type=str, help="Salva a DATABASE_URL no arquivo .env")
+    parser.add_argument('--backup', action='store_true', help="Gera backup JSON datado na pasta backups/")
+    parser.add_argument('--telegram-backup', action='store_true', help="Gera backup e envia arquivo diretamente ao Telegram")
 
     args = parser.parse_args()
 
@@ -87,6 +89,22 @@ def main():
             data = json.load(f)
         counts = CloudDatabaseService.import_data_bundle(data)
         print(f"✅ Importação concluída! Registros importados: {counts}")
+
+    elif args.backup:
+        print("\n📦 Gerando backup completo dos dados...")
+        res = BackupService.create_backup_file()
+        print(f"✅ Backup criado com sucesso: {res['filename']} ({res['size_kb']} KB)")
+        print(f"Salvo em: {res['filepath']}")
+        print(f"Itens salvos: {res['events_count']} eventos, {res['tasks_count']} tarefas, {res['emails_count']} e-mails, {res['memos_count']} memorandos.")
+
+    elif args.telegram_backup:
+        print("\n🚀 Gerando backup e enviando diretamente para o Telegram...")
+        res = BackupService.send_backup_to_telegram()
+        if res.get("success"):
+            print(f"✅ {res['message']}")
+            print(f"Arquivo enviado: {res['backup_info']['filename']}")
+        else:
+            print(f"❌ Falha no envio: {res.get('error')}")
 
     else:
         parser.print_help()

@@ -3,7 +3,7 @@ import requests
 import datetime
 from django.utils import timezone
 from django.conf import settings
-from .models import CalendarEvent, EmailHighlight, DailyBriefing, UserPreference, ChatMessage, QuickTask
+from .models import CalendarEvent, EmailHighlight, DailyBriefing, UserPreference, ChatMessage, QuickTask, VoiceMemo
 
 # Tabela de interpretação dos códigos WMO de tempo da Open-Meteo
 WMO_WEATHER_CODES = {
@@ -925,6 +925,147 @@ SUAS FERRAMENTAS E REGRAS:
             "all_actions": executed_actions,
             "message_id": assistant_msg.id,
             "created_at": assistant_msg.created_at.strftime("%H:%M")
+        }
+
+    @classmethod
+    def process_message_stream(cls, user_text, api_key_override=None):
+        """Processa a mensagem com resposta em streaming SSE (Server-Sent Events)"""
+        import time
+        import json
+
+        pref = UserPreference.objects.first()
+        api_key = api_key_override or (pref.gemini_api_key if pref and pref.gemini_api_key else None) or getattr(settings, "GEMINI_API_KEY", "")
+
+        # Se houver chave Gemini, tenta fazer stream direto com o modelo
+        if api_key and api_key.strip():
+            try:
+                import google.generativeai as genai
+                genai.configure(api_key=api_key.strip())
+                now = timezone.localtime()
+                model = genai.GenerativeModel("gemini-1.5-flash")
+                prompt = f"""Você é a Bella, assistente pessoal carismática, jovem, alegre e prestativa. Responda em português brasileiro de forma natural, calorosa e concisa.
+Data/Hora atual: {now.strftime('%d/%m/%Y %H:%M')}.
+Mensagem do usuário: {user_text}"""
+                response = model.generate_content(prompt, stream=True)
+                full_reply = ""
+                for chunk in response:
+                    if chunk.text:
+                        full_reply += chunk.text
+                        yield f"data: {json.dumps({'type': 'chunk', 'text': chunk.text}, ensure_ascii=False)}\n\n"
+
+                user_msg = ChatMessage.objects.create(role='user', content=user_text)
+                asst_msg = ChatMessage.objects.create(role='assistant', content=full_reply, action_type="NONE")
+                yield f"data: {json.dumps({'type': 'done', 'reply': full_reply, 'action_type': 'NONE', 'action_executed': None, 'message_id': asst_msg.id}, ensure_ascii=False)}\n\n"
+                return
+            except Exception as e:
+                print(f"Erro no streaming Gemini: {e}")
+
+        # Fallback estruturado com execução de ferramentas locais e streaming de tokens
+        result = cls.process_message(user_text, api_key_override=api_key_override)
+        reply = result.get("reply", "")
+
+        words = reply.split(" ")
+        for i, word in enumerate(words):
+            chunk = word if i == 0 else " " + word
+            yield f"data: {json.dumps({'type': 'chunk', 'text': chunk}, ensure_ascii=False)}\n\n"
+            time.sleep(0.02)
+
+        yield f"data: {json.dumps({'type': 'done', 'reply': reply, 'action_type': result.get('action_type', 'NONE'), 'action_executed': result.get('action_executed'), 'message_id': result.get('message_id')}, ensure_ascii=False)}\n\n"
+
+
+class VoiceMemoService:
+    """Processamento inteligente de memorandos e notas de voz com categorização por IA"""
+
+    @staticmethod
+    def process_memo(transcript_text: str) -> dict:
+        import re
+        import json
+        clean = (transcript_text or "").strip()
+        if not clean:
+            return {"success": False, "error": "Transcrição vazia"}
+
+        lower = clean.lower()
+        now = timezone.localtime()
+        intent = "note"
+        action_taken = ""
+        reply = ""
+        created_item = None
+
+        # 1. Detecta Compromisso de Agenda
+        is_event = any(k in lower for k in ["reunião", "reuniao", "compromisso", "dentista", "médico", "medico", "consulta", "treino", "academia", "almoço", "almoco", "jantar", "aniversário", "aniversario", "marcar", "agendar"]) and (
+            any(k in lower for k in ["às", "as", "horas", "amanhã", "amanha", "segunda", "terça", "quarta", "quinta", "sexta", "sábado", "domingo", "hoje", "dia"])
+        )
+
+        # 2. Detecta Tarefa
+        is_task = any(k in lower for k in ["tarefa", "lembrete", "lembrar de", "comprar", "pagar", "enviar", "fazer", "ligar para", "mandar", "organizar", "limpar", "consertar", "buscar", "levar"])
+
+        if is_event and not is_task:
+            intent = "event"
+            time_tuple = ChatAssistantService.parse_time_string(lower)
+            time_str = f"{time_tuple[0]:02d}:{time_tuple[1]:02d}"
+            date_str = "amanhã" if ("amanhã" in lower or "amanha" in lower) else "hoje"
+            target_date = ChatAssistantService.parse_date_string(date_str, now.date())
+            target_dt = timezone.make_aware(datetime.datetime.combine(target_date, datetime.time(*time_tuple)))
+
+            clean_title = re.sub(r'^(?:por favor,?\s*)?(?:(?:anote|lembrete|gravar|memorando|agenda|agendar|marcar)\b\s*)?(?:\b(?:de|para)\b\s*)?', '', clean, flags=re.IGNORECASE).strip() or "Compromisso de Voz"
+            category = "health" if any(w in lower for w in ["médico", "dentista", "treino", "saúde"]) else "work"
+
+            ev = CalendarEvent.objects.create(
+                title=clean_title,
+                start_time=target_dt,
+                category=category,
+                description=f"Memorando gravado por voz: {clean}"
+            )
+            action_taken = f"Compromisso '{ev.title}' agendado para {target_date.strftime('%d/%m')} às {time_str}."
+            reply = f"Perfeito! Agendei seu compromisso '{ev.title}' para {target_date.strftime('%d/%m')} às {time_str}."
+            created_item = {"type": "event", "id": ev.id, "title": ev.title, "time": time_str, "date": target_date.strftime("%d/%m")}
+
+        elif is_task:
+            intent = "task"
+            clean_title = re.sub(r'^(?:por favor,?\s*)?(?:(?:anote|lembrete|gravar|memorando|tarefa|lembrar de|comprar|fazer)\b\s*)?(?:\b(?:de|para)\b\s*)?', '', clean, flags=re.IGNORECASE).strip() or clean
+            priority = "high" if any(w in lower for w in ["urgente", "alta", "prioridade", "importante"]) else "medium"
+            cat = "personal" if any(w in lower for w in ["mercado", "comprar", "casa", "remédio", "remedio"]) else "work"
+
+            task = QuickTask.objects.create(
+                title=clean_title,
+                priority=priority,
+                category=cat,
+                notes=f"Transcrição original: {clean}",
+                due_date=now.date()
+            )
+            action_taken = f"Tarefa '{task.title}' criada na lista de afazeres."
+            reply = f"Com certeza! Já criei a tarefa '{task.title}' na sua lista de afazeres!"
+            created_item = {"type": "task", "id": task.id, "title": task.title, "priority": priority}
+
+        else:
+            intent = "note"
+            clean_title = re.sub(r'^(?:por favor,?\s*)?(?:(?:anote|lembrete|gravar|memorando)\b\s*)?(?:\b(?:de|para)\b\s*)?', '', clean, flags=re.IGNORECASE).strip() or clean
+            task = QuickTask.objects.create(
+                title=clean_title[:80],
+                priority="medium",
+                category="study",
+                notes=clean,
+                due_date=now.date()
+            )
+            action_taken = f"Nota rápida salva: '{task.title}'."
+            reply = f"Anotado! Salvei sua nota de voz com sucesso."
+            created_item = {"type": "note", "id": task.id, "title": task.title}
+
+        memo = VoiceMemo.objects.create(
+            transcript=clean,
+            intent_detected=intent,
+            action_taken=action_taken,
+            is_processed=True
+        )
+
+        return {
+            "success": True,
+            "memo_id": memo.id,
+            "intent": intent,
+            "action_taken": action_taken,
+            "reply": reply,
+            "item": created_item,
+            "transcript": clean
         }
 
 

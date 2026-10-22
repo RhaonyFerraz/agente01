@@ -10,7 +10,7 @@ from django.db import connection, connections
 from django.conf import settings
 from django.core.management import call_command
 from django.utils import timezone
-from .models import CalendarEvent, QuickTask, EmailHighlight, DailyBriefing, ChatMessage, UserPreference, Theme
+from .models import CalendarEvent, QuickTask, EmailHighlight, DailyBriefing, ChatMessage, UserPreference, Theme, VoiceMemo
 
 
 class CloudDatabaseService:
@@ -173,6 +173,15 @@ class CloudDatabaseService:
                 }
                 for m in ChatMessage.objects.all()
             ],
+            "voice_memos": [
+                {
+                    "transcript": vm.transcript,
+                    "intent_detected": vm.intent_detected,
+                    "action_taken": vm.action_taken,
+                    "created_at": vm.created_at.isoformat(),
+                }
+                for vm in VoiceMemo.objects.all()
+            ],
         }
         return data
 
@@ -219,6 +228,17 @@ class CloudDatabaseService:
                 )
                 imported_counts["emails"] += 1
 
+        # 4. Memorandos de Voz
+        for item in data.get("voice_memos", []):
+            if not VoiceMemo.objects.filter(transcript=item.get("transcript", "")).exists():
+                VoiceMemo.objects.create(
+                    transcript=item.get("transcript", ""),
+                    intent_detected=item.get("intent_detected", "note"),
+                    action_taken=item.get("action_taken", ""),
+                    is_processed=True
+                )
+                imported_counts["memos"] = imported_counts.get("memos", 0) + 1
+
         return imported_counts
 
     @staticmethod
@@ -248,3 +268,220 @@ class CloudDatabaseService:
             f.writelines(new_lines)
 
         return True
+
+    @staticmethod
+    def sync_client_data(client_items=None, last_sync_iso=None):
+        """Sincronização bidirecional em tempo real entre dispositivos (celular <-> computador <-> Supabase)"""
+        now = timezone.now()
+        client_items = client_items or {}
+        imported_counts = {"tasks": 0, "events": 0}
+
+        # 1. Aplica tarefas criadas offline no cliente
+        for t in client_items.get("tasks", []):
+            title = t.get("title", "").strip()
+            if title and not QuickTask.objects.filter(title=title, due_date=now.date()).exists():
+                QuickTask.objects.create(
+                    title=title,
+                    priority=t.get("priority", "medium"),
+                    category=t.get("category", "work"),
+                    is_done=bool(t.get("is_done", False)),
+                    due_date=now.date()
+                )
+                imported_counts["tasks"] += 1
+
+        # 2. Aplica eventos criados offline no cliente
+        for ev in client_items.get("events", []):
+            title = ev.get("title", "").strip()
+            start_str = ev.get("start_time")
+            if title and start_str:
+                try:
+                    s_dt = timezone.datetime.fromisoformat(start_str)
+                    if timezone.is_naive(s_dt):
+                        s_dt = timezone.make_aware(s_dt)
+                    if not CalendarEvent.objects.filter(title=title, start_time=s_dt).exists():
+                        CalendarEvent.objects.create(
+                            title=title,
+                            start_time=s_dt,
+                            category=ev.get("category", "work"),
+                            is_important=bool(ev.get("is_important", False))
+                        )
+                        imported_counts["events"] += 1
+                except Exception as e:
+                    print(f"Erro ao sincronizar evento offline: {e}")
+
+        # 3. Retorna o estado atualizado da nuvem para o cliente
+        events_qs = CalendarEvent.objects.all().order_by('start_time')
+        tasks_qs = QuickTask.objects.filter(due_date=now.date()).order_by('is_done', '-priority')
+
+        cloud_status = CloudDatabaseService.get_status()
+
+        return {
+            "success": True,
+            "server_time": now.isoformat(),
+            "is_cloud": cloud_status["is_cloud"],
+            "provider": cloud_status["provider"],
+            "imported_counts": imported_counts,
+            "tasks": [
+                {
+                    "id": t.id,
+                    "title": t.title,
+                    "is_done": t.is_done,
+                    "priority": t.priority,
+                    "category": t.category,
+                    "category_label": t.get_category_display(),
+                }
+                for t in tasks_qs
+            ],
+            "events": [
+                {
+                    "id": e.id,
+                    "title": e.title,
+                    "start_time": timezone.localtime(e.start_time).strftime("%H:%M"),
+                    "start_time_iso": e.start_time.isoformat(),
+                    "category": e.category,
+                    "is_important": e.is_important,
+                }
+                for e in events_qs
+            ]
+        }
+
+
+class BackupService:
+    """Serviço de Backup Automático Periódico (JSON no Servidor + Envio de Arquivo via Telegram)"""
+
+    @staticmethod
+    def get_backups_dir():
+        backup_dir = os.path.join(settings.BASE_DIR, 'backups')
+        os.makedirs(backup_dir, exist_ok=True)
+        return backup_dir
+
+    @staticmethod
+    def create_backup_file():
+        """Exporta bundle completo de dados e salva em arquivo JSON datado na pasta backups/"""
+        backup_dir = BackupService.get_backups_dir()
+        now = timezone.now()
+        timestamp = now.strftime("%Y%m%d_%H%M%S")
+        filename = f"backup_assistente_{timestamp}.json"
+        filepath = os.path.join(backup_dir, filename)
+
+        data = CloudDatabaseService.export_data_bundle()
+
+        with open(filepath, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+
+        file_size_kb = round(os.path.getsize(filepath) / 1024, 2)
+
+        # Remove backups muito antigos mantendo os 10 mais recentes
+        try:
+            existing = sorted([
+                os.path.join(backup_dir, f) for f in os.listdir(backup_dir) if f.startswith('backup_') and f.endswith('.json')
+            ], key=os.path.getmtime)
+            while len(existing) > 10:
+                oldest = existing.pop(0)
+                os.remove(oldest)
+        except Exception as e:
+            print(f"Erro ao limpar backups antigos: {e}")
+
+        # Atualiza timestamp em UserPreference
+        pref = UserPreference.objects.first()
+        if pref:
+            pref.last_backup_at = now
+            pref.save()
+
+        return {
+            "success": True,
+            "filename": filename,
+            "filepath": filepath,
+            "size_kb": file_size_kb,
+            "timestamp": timezone.localtime(now).strftime("%d/%m/%Y às %H:%M:%S"),
+            "events_count": len(data.get("events", [])),
+            "tasks_count": len(data.get("tasks", [])),
+            "emails_count": len(data.get("emails", [])),
+            "messages_count": len(data.get("messages", [])),
+            "memos_count": len(data.get("voice_memos", [])),
+        }
+
+    @staticmethod
+    def send_backup_to_telegram(custom_caption=None):
+        """Cria o backup em JSON e envia o arquivo real diretamente como documento anexado no Telegram"""
+        import requests
+        pref = UserPreference.objects.first()
+        bot_token = (pref.telegram_bot_token if pref and pref.telegram_bot_token else None) or os.getenv("TELEGRAM_BOT_TOKEN")
+        chat_id = (pref.telegram_chat_id if pref and pref.telegram_chat_id else None) or os.getenv("TELEGRAM_CHAT_ID")
+
+        if not bot_token or not chat_id:
+            return {"success": False, "error": "Token do Telegram ou Chat ID não configurados nas preferências."}
+
+        backup_info = BackupService.create_backup_file()
+        filepath = backup_info["filepath"]
+        filename = backup_info["filename"]
+
+        caption = custom_caption or (
+            f"📦 *BACKUP AUTOMÁTICO - BELLA ASSISTENTE*\n\n"
+            f"📅 *Data:* {backup_info['timestamp']}\n"
+            f"💾 *Tamanho:* {backup_info['size_kb']} KB\n"
+            f"📊 *Conteúdo salvo:*\n"
+            f"  * 📅 Compromissos: {backup_info['events_count']}\n"
+            f"  * 🎯 Tarefas: {backup_info['tasks_count']}\n"
+            f"  * ✉️ E-mails: {backup_info['emails_count']}\n"
+            f"  * 💬 Mensagens: {backup_info['messages_count']}\n"
+            f"  * 🎙️ Memorandos de Voz: {backup_info['memos_count']}\n\n"
+            f"_Seu backup semanal está seguro e pode ser restaurado a qualquer momento._"
+        )
+
+        url = f"https://api.telegram.org/bot{bot_token.strip()}/sendDocument"
+
+        try:
+            with open(filepath, 'rb') as doc_file:
+                files = {'document': (filename, doc_file, 'application/json')}
+                data = {
+                    'chat_id': chat_id.strip(),
+                    'caption': caption,
+                    'parse_mode': 'Markdown'
+                }
+                res = requests.post(url, data=data, files=files, timeout=25)
+                res_json = res.json()
+
+                if res_json.get("ok"):
+                    return {
+                        "success": True,
+                        "backup_info": backup_info,
+                        "telegram_message_id": res_json.get("result", {}).get("message_id"),
+                        "message": "Backup gerado e enviado ao seu Telegram com sucesso!"
+                    }
+                else:
+                    return {
+                        "success": False,
+                        "backup_info": backup_info,
+                        "error": res_json.get("description", "Falha no envio para o Telegram")
+                    }
+        except Exception as e:
+            return {"success": False, "backup_info": backup_info, "error": str(e)}
+
+    @staticmethod
+    def check_and_run_weekly_backup():
+        """Verifica se é hora de rodar o backup semanal automático (chamado periodicamente pela aplicação)"""
+        pref = UserPreference.objects.first()
+        if not pref or not pref.auto_backup_enabled:
+            return {"ran": False, "reason": "Backup automático desativado"}
+
+        now = timezone.now()
+        should_run = False
+
+        if not pref.last_backup_at:
+            should_run = True
+        else:
+            diff_days = (now - pref.last_backup_at).total_seconds() / 86400
+            if diff_days >= 7.0:
+                should_run = True
+
+        if should_run:
+            if pref.auto_backup_telegram and pref.telegram_bot_token and pref.telegram_chat_id:
+                result = BackupService.send_backup_to_telegram()
+            else:
+                info = BackupService.create_backup_file()
+                result = {"success": True, "backup_info": info, "message": "Backup local gerado com sucesso."}
+            return {"ran": True, "result": result}
+
+        return {"ran": False, "reason": "Backup recente em dia (menos de 7 dias)"}
+
